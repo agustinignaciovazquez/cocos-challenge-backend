@@ -1,0 +1,148 @@
+# Every endpoint, happy and failure paths, against a database seeded from db/init.sql.
+# VS Code REST Client: start the API, then "Send Request" above any case below.
+
+@baseUrl = http://localhost:3000
+
+### 200: the service is up
+GET {{baseUrl}}/health
+
+### 200: search instruments by ticker fragment
+GET {{baseUrl}}/instruments?q=pam
+
+### 200: search instruments by name fragment
+GET {{baseUrl}}/instruments?q=banco
+
+### 200: no match is an empty list, not an error
+GET {{baseUrl}}/instruments?q=zzz
+
+### 400: the search term is required
+GET {{baseUrl}}/instruments
+
+### 400: a blank search term is no term at all
+GET {{baseUrl}}/instruments?q=%20%20
+
+### 200: the portfolio of a user, cash plus positions
+GET {{baseUrl}}/users/1/portfolio
+
+### 404: unknown user
+GET {{baseUrl}}/users/999/portfolio
+
+### 400: the user id must be a number
+GET {{baseUrl}}/users/abc/portfolio
+
+### 201 FILLED: a market buy executes at the latest close
+POST {{baseUrl}}/orders
+Content-Type: application/json
+
+{ "userId": 1, "instrumentId": 47, "side": "BUY", "type": "MARKET", "size": 10 }
+
+### 201 FILLED: a market sell covered by the held shares
+POST {{baseUrl}}/orders
+Content-Type: application/json
+
+{ "userId": 1, "instrumentId": 54, "side": "SELL", "type": "MARKET", "size": 100 }
+
+### 201 NEW: a limit buy parks at its limit price
+POST {{baseUrl}}/orders
+Content-Type: application/json
+
+{ "userId": 1, "instrumentId": 47, "side": "BUY", "type": "LIMIT", "price": 900, "size": 10 }
+
+### 201 REJECTED: the available cash cannot cover the buy
+POST {{baseUrl}}/orders
+Content-Type: application/json
+
+{ "userId": 1, "instrumentId": 50, "side": "BUY", "type": "MARKET", "size": 10000 }
+
+### 201 REJECTED: the held shares cannot cover the sell
+POST {{baseUrl}}/orders
+Content-Type: application/json
+
+{ "userId": 1, "instrumentId": 54, "side": "SELL", "type": "MARKET", "size": 999 }
+
+### 201 FILLED: an amount buys whole shares at the close (10000 / 925.85 = 10)
+POST {{baseUrl}}/orders
+Content-Type: application/json
+
+{ "userId": 1, "instrumentId": 47, "side": "BUY", "type": "MARKET", "amount": 10000 }
+
+### 201 NEW: an amount buys whole shares at the limit price (10000 / 900 = 11)
+POST {{baseUrl}}/orders
+Content-Type: application/json
+
+{ "userId": 1, "instrumentId": 47, "side": "BUY", "type": "LIMIT", "price": 900, "amount": 10000 }
+
+### 400: the amount does not reach a single share
+POST {{baseUrl}}/orders
+Content-Type: application/json
+
+{ "userId": 1, "instrumentId": 47, "side": "BUY", "type": "MARKET", "amount": 100 }
+
+### 400: size and amount are exclusive
+POST {{baseUrl}}/orders
+Content-Type: application/json
+
+{ "userId": 1, "instrumentId": 47, "side": "BUY", "type": "MARKET", "size": 10, "amount": 10000 }
+
+### 400: one of size or amount is required
+POST {{baseUrl}}/orders
+Content-Type: application/json
+
+{ "userId": 1, "instrumentId": 47, "side": "BUY", "type": "MARKET" }
+
+### 400: a limit order needs a price
+POST {{baseUrl}}/orders
+Content-Type: application/json
+
+{ "userId": 1, "instrumentId": 47, "side": "BUY", "type": "LIMIT", "size": 10 }
+
+### 400: a market order takes no price
+POST {{baseUrl}}/orders
+Content-Type: application/json
+
+{ "userId": 1, "instrumentId": 47, "side": "BUY", "type": "MARKET", "price": 900, "size": 10 }
+
+### 400: money below the cent does not exist
+POST {{baseUrl}}/orders
+Content-Type: application/json
+
+{ "userId": 1, "instrumentId": 47, "side": "BUY", "type": "LIMIT", "price": 900.123, "size": 10 }
+
+### 400: unknown side
+POST {{baseUrl}}/orders
+Content-Type: application/json
+
+{ "userId": 1, "instrumentId": 47, "side": "HOLD", "type": "MARKET", "size": 10 }
+
+### 400: the currency itself is not tradable
+POST {{baseUrl}}/orders
+Content-Type: application/json
+
+{ "userId": 1, "instrumentId": 66, "side": "BUY", "type": "MARKET", "size": 10 }
+
+### 404: an order for an unknown user
+POST {{baseUrl}}/orders
+Content-Type: application/json
+
+{ "userId": 999, "instrumentId": 47, "side": "BUY", "type": "MARKET", "size": 10 }
+
+### 404: unknown instrument
+POST {{baseUrl}}/orders
+Content-Type: application/json
+
+{ "userId": 1, "instrumentId": 9999, "side": "BUY", "type": "MARKET", "size": 10 }
+
+### 200: cancelling the seeded open order returns it as CANCELLED
+PATCH {{baseUrl}}/orders/5/cancel
+
+### 409: the same order cannot be cancelled twice (send the request above first)
+PATCH {{baseUrl}}/orders/5/cancel
+
+### 409: a filled order cannot be cancelled
+PATCH {{baseUrl}}/orders/2/cancel
+
+### 404: unknown order
+PATCH {{baseUrl}}/orders/9999/cancel
+
+### 400: the order id must be a number
+PATCH {{baseUrl}}/orders/abc/cancel
