@@ -46,6 +46,24 @@ export class PortfolioRepository {
     return cash;
   }
 
+  async heldShares(
+    userId: number,
+    instrumentId: number,
+    db: Prisma.TransactionClient = this.prisma,
+  ): Promise<number> {
+    const [{ shares }] = await db.$queryRaw<[{ shares: number }]>`
+      SELECT COALESCE(SUM(
+        CASE side WHEN 'BUY' THEN size ELSE -size END
+      ), 0)::int AS shares
+      FROM orders
+      WHERE userid = ${userId}
+        AND instrumentid = ${instrumentId}
+        AND status = 'FILLED'
+        AND side IN ('BUY', 'SELL')
+    `;
+    return shares;
+  }
+
   holdings(
     userId: number,
     db: Prisma.TransactionClient = this.prisma,
