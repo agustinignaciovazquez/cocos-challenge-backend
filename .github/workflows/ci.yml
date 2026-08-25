@@ -16,6 +16,6 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run build
-      # The e2e suites start their own Postgres through testcontainers, using the
-      # Docker daemon the runner already provides.
+      # No service container: the e2e suites start their own Postgres through
+      # testcontainers, on the Docker daemon the runner already provides.
       - run: npm test
