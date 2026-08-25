@@ -4,7 +4,7 @@ import { StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
-import { PlacedOrder } from '../src/orders/orders.service';
+import { OrderView } from '../src/orders/orders.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { startTestDatabase } from './db';
 
@@ -21,9 +21,9 @@ describe('Orders (e2e)', () => {
   const post = (order: object): request.Test =>
     request(app.getHttpServer()).post('/orders').send(order);
 
-  const place = async (order: object): Promise<PlacedOrder> => {
+  const place = async (order: object): Promise<OrderView> => {
     const response = await post(order).expect(201);
-    return response.body as PlacedOrder;
+    return response.body as OrderView;
   };
 
   const availableCash = async (userId: number): Promise<string> => {

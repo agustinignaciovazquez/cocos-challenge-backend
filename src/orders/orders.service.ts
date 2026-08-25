@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -7,8 +8,10 @@ import { Prisma } from '@prisma/client';
 import { PortfolioRepository } from '../portfolio/portfolio.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  canTransition,
   decide,
   OrderRuleError,
+  ORDER_STATUSES,
   OrderStatus,
   OrderType,
   resolveSize,
@@ -16,7 +19,7 @@ import {
 } from './order-rules';
 import { PlaceOrderDto } from './place-order.dto';
 
-export type PlacedOrder = {
+export type OrderView = {
   id: number;
   instrumentId: number;
   userId: number;
@@ -30,6 +33,15 @@ export type PlacedOrder = {
 
 type Quote = { type: string | null; close: Prisma.Decimal | null };
 
+type OrderRow = Omit<OrderView, 'price' | 'datetime'> & {
+  price: Prisma.Decimal;
+  datetime: Date;
+};
+
+const CANCELLABLE = ORDER_STATUSES.filter((status) =>
+  canTransition(status, 'CANCELLED'),
+);
+
 const money = (value?: number): Prisma.Decimal | undefined =>
   value === undefined ? undefined : new Prisma.Decimal(value);
 
@@ -40,7 +52,7 @@ export class OrdersService {
     private readonly portfolio: PortfolioRepository,
   ) {}
 
-  async place(order: PlaceOrderDto): Promise<PlacedOrder> {
+  async place(order: PlaceOrderDto): Promise<OrderView> {
     try {
       return await this.prisma.$transaction((tx) =>
         this.placeWithin(order, tx),
@@ -53,10 +65,41 @@ export class OrdersService {
     }
   }
 
+  async cancel(id: number): Promise<OrderView> {
+    // The transition is the UPDATE's own condition, so concurrent cancels cannot both
+    // match the row and no lock is needed: placement only ever inserts.
+    const [cancelled] = await this.prisma.$queryRaw<OrderRow[]>`
+      UPDATE orders
+      SET status = 'CANCELLED'
+      WHERE id = ${id} AND status IN (${Prisma.join(CANCELLABLE)})
+      RETURNING id, instrumentid AS "instrumentId", userid AS "userId",
+                side, size, price, type, status, datetime
+    `;
+
+    if (cancelled === undefined) {
+      const order = await this.prisma.order.findUnique({
+        where: { id },
+        select: { status: true },
+      });
+      if (order === null) {
+        throw new NotFoundException(`Order ${id} not found`);
+      }
+      throw new ConflictException(
+        `Order ${id} is ${order.status} and cannot be cancelled`,
+      );
+    }
+
+    return {
+      ...cancelled,
+      price: cancelled.price.toFixed(2),
+      datetime: cancelled.datetime.toISOString(),
+    };
+  }
+
   private async placeWithin(
     order: PlaceOrderDto,
     tx: Prisma.TransactionClient,
-  ): Promise<PlacedOrder> {
+  ): Promise<OrderView> {
     // Serialises a user's placements so two cannot both spend the same balance.
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(${order.userId})`;
 

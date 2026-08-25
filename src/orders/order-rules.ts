@@ -2,10 +2,16 @@ import { Prisma } from '@prisma/client';
 
 export const SIDES = ['BUY', 'SELL'] as const;
 export const ORDER_TYPES = ['MARKET', 'LIMIT'] as const;
+export const ORDER_STATUSES = [
+  'NEW',
+  'FILLED',
+  'REJECTED',
+  'CANCELLED',
+] as const;
 
 export type Side = (typeof SIDES)[number];
 export type OrderType = (typeof ORDER_TYPES)[number];
-export type OrderStatus = 'NEW' | 'FILLED' | 'REJECTED' | 'CANCELLED';
+export type OrderStatus = (typeof ORDER_STATUSES)[number];
 
 export class OrderRuleError extends Error {}
 
