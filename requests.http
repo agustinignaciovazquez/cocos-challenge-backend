@@ -117,6 +117,12 @@ Content-Type: application/json
 
 { "userId": 1, "instrumentId": 47, "side": "HOLD", "type": "MARKET", "size": 10 }
 
+### 400: an order without a userId is malformed, not an order for an unknown user
+POST {{baseUrl}}/orders
+Content-Type: application/json
+
+{ "instrumentId": 47, "side": "BUY", "type": "MARKET", "size": 10 }
+
 ### 400: the currency itself is not tradable
 POST {{baseUrl}}/orders
 Content-Type: application/json
@@ -144,8 +150,8 @@ Content-Type: application/json
 ### 200: cancelling the seeded open order returns it as CANCELLED
 PATCH {{baseUrl}}/orders/5/cancel
 
-### 409: the same order cannot be cancelled twice (send the request above first)
-PATCH {{baseUrl}}/orders/5/cancel
+### 409: an order the seed already carries as CANCELLED cannot be cancelled again
+PATCH {{baseUrl}}/orders/3/cancel
 
 ### 409: a filled order cannot be cancelled
 PATCH {{baseUrl}}/orders/2/cancel

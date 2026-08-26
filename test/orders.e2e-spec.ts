@@ -20,6 +20,14 @@ const OPEN_ORDER = 5;
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
+const diagnosis = (response: request.Response): string =>
+  (response.body as { message: string[] }).message[0];
+
+const LOCK_POLL_MS = 50;
+// Well under half the placement transaction's 10s timeout, so a lock that never appears
+// fails this poll instead of coming back as the 503 that timeout maps to.
+const LOCK_POLL_ATTEMPTS = 80;
+
 describe('Orders (e2e)', () => {
   let container: StartedPostgreSqlContainer;
   let app: INestApplication<App>;
@@ -56,17 +64,19 @@ describe('Orders (e2e)', () => {
     userId: number,
     granted: boolean,
   ): Promise<void> => {
-    for (let attempt = 0; attempt < 100; attempt++) {
+    for (let attempt = 0; attempt < LOCK_POLL_ATTEMPTS; attempt++) {
       const [{ locks }] = await prisma.$queryRaw<[{ locks: number }]>`
         SELECT count(*)::int AS locks
         FROM pg_locks
-        WHERE locktype = 'advisory' AND objid::bigint = ${userId}
-          AND granted = ${granted}
+        WHERE locktype = 'advisory' AND granted = ${granted}
+          -- The service locks on the single-bigint key: its high half lands in classid and
+          -- objsubid is 1, where the two-key form would leave the first key and a 2.
+          AND classid = 0 AND objid::bigint = ${userId} AND objsubid = 1
       `;
       if (locks > 0) {
         return;
       }
-      await sleep(50);
+      await sleep(LOCK_POLL_MS);
     }
     throw new Error(
       `No ${granted ? 'held' : 'waiting'} advisory lock on user ${userId}`,
@@ -98,15 +108,15 @@ describe('Orders (e2e)', () => {
   });
 
   it('fills a market buy at the latest close', async () => {
-    expect(
-      await place({
-        userId: 1,
-        instrumentId: PAMP,
-        side: 'BUY',
-        type: 'MARKET',
-        size: 10,
-      }),
-    ).toEqual({
+    const order = await place({
+      userId: 1,
+      instrumentId: PAMP,
+      side: 'BUY',
+      type: 'MARKET',
+      size: 10,
+    });
+
+    expect(order).toEqual({
       id: expect.any(Number) as number,
       instrumentId: PAMP,
       userId: 1,
@@ -117,6 +127,11 @@ describe('Orders (e2e)', () => {
       status: 'FILLED',
       datetime: expect.any(String) as string,
     });
+    // The body is the row read back from the insert, so a timestamp stored in the wrong
+    // zone would come back hours away from the placement it reports.
+    expect(Math.abs(Date.now() - Date.parse(order.datetime))).toBeLessThan(
+      60_000,
+    );
   });
 
   it('parks a limit buy at its limit price', async () => {
@@ -216,9 +231,14 @@ describe('Orders (e2e)', () => {
 
     await post({ ...buy, type: 'LIMIT', size: 10 }).expect(400);
     await post({ ...buy, type: 'MARKET', price: 900, size: 10 }).expect(400);
-    await post({ ...buy, type: 'MARKET', size: 10, amount: 10000 }).expect(400);
+    const exclusive = await post({
+      ...buy,
+      type: 'MARKET',
+      size: 10,
+      amount: 10000,
+    }).expect(400);
     await post({ ...buy, type: 'MARKET' }).expect(400);
-    await post({ ...buy, type: 'MARKET', size: 0 }).expect(400);
+    const badSize = await post({ ...buy, type: 'MARKET', size: 0 }).expect(400);
     await post({ ...buy, type: 'MARKET', size: -10 }).expect(400);
     await post({ ...buy, type: 'STOP', size: 10 }).expect(400);
     await post({ ...buy, type: 'LIMIT', price: 900.123, size: 10 }).expect(400);
@@ -231,6 +251,15 @@ describe('Orders (e2e)', () => {
       type: 'MARKET',
       size: 10,
     }).expect(400);
+
+    // The two diagnoses are anchored apart on purpose: one message covering both used to
+    // answer size: 0 by asking for one of size or amount, which was not the problem.
+    expect(diagnosis(exclusive)).toMatch(
+      /^send exactly one of size or amount$/,
+    );
+    expect(diagnosis(badSize)).toMatch(
+      /^size must be a whole number of shares/,
+    );
 
     expect(await prisma.order.count()).toBe(before);
   });
@@ -364,24 +393,29 @@ describe('Orders (e2e)', () => {
       },
       { timeout: 30_000 },
     );
-    await awaitAdvisoryLock(4, true);
 
     let settled = false;
-    const placement = post({
-      userId: 4,
-      instrumentId: PAMP,
-      side: 'BUY',
-      type: 'MARKET',
-      size: 5,
-    }).then((response) => {
-      settled = true;
-      return response;
-    });
+    let placement!: Promise<request.Response>;
+    try {
+      await awaitAdvisoryLock(4, true);
+      placement = post({
+        userId: 4,
+        instrumentId: PAMP,
+        side: 'BUY',
+        type: 'MARKET',
+        size: 5,
+      }).then((response) => {
+        settled = true;
+        return response;
+      });
 
-    await awaitAdvisoryLock(4, false);
-    expect(settled).toBe(false);
-
-    release();
+      await awaitAdvisoryLock(4, false);
+      expect(settled).toBe(false);
+    } finally {
+      // Releasing under finally: a failed poll or assertion would otherwise leave the
+      // holder pinning the lock — and the placement queued behind it — for its full 30s.
+      release();
+    }
     await holding;
 
     expect((await placement).body).toMatchObject({ status: 'REJECTED' });

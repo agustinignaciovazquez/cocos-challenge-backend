@@ -1,12 +1,13 @@
 -- Suggested indexes for the provided schema. Apply to a local database only —
 -- never to the shared challenge database (see README, "Base de datos").
 
--- Every portfolio read and every order placement folds one user's orders.
-CREATE INDEX IF NOT EXISTS orders_userid_idx ON orders (userId);
+-- Superseded by the composite below, where an older version of this file created them.
+DROP INDEX IF EXISTS orders_userid_idx;
+DROP INDEX IF EXISTS orders_instrumentid_idx;
 
--- Order placement counts the shares one user holds of the one instrument being traded, so
--- the pair is what it filters on; an index on the instrument alone would still read every
--- other user's rows for it.
+-- Every portfolio read and every order placement folds one user's orders, and placement
+-- also counts the shares that user holds of the one instrument being traded. The leading
+-- column serves the fold, the pair serves the count, so one index serves both.
 CREATE INDEX IF NOT EXISTS orders_userid_instrumentid_idx
   ON orders (userId, instrumentId);
 

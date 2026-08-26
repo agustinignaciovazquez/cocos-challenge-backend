@@ -51,8 +51,11 @@ class SizeOrAmount implements ValidatorConstraintInterface {
       : amount === undefined && isSize(size);
   }
 
-  defaultMessage(): string {
-    return `send exactly one of size, a whole number of shares of at most ${MAX_INT4}, or amount`;
+  defaultMessage({ object }: ValidationArguments): string {
+    const { size, amount } = object as PlaceOrderDto;
+    return size !== undefined && amount === undefined
+      ? `size must be a whole number of shares between 1 and ${MAX_INT4}`
+      : 'send exactly one of size or amount';
   }
 }
 

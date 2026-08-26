@@ -26,7 +26,7 @@ server never opens a pool against a database that is still seeding.
 `DATABASE_URL` at it — `.env.example` carries the commented line.
 
 - Interactive docs: <http://localhost:3000/docs> (OpenAPI JSON at `/docs-json`)
-- Ready-to-send calls: [`requests.http`](requests.http) — 33 cases, every endpoint with
+- Ready-to-send calls: [`requests.http`](requests.http) — 34 cases, every endpoint with
   its happy and failure paths, for the VS Code REST Client extension
 
 `npm run start:prod` serves the compiled build; `PORT` overrides the port.
@@ -34,15 +34,16 @@ server never opens a pool against a database that is still seeding.
 ### Tests
 
 ```bash
-npm test         # 19 unit + 39 e2e
+npm test         # 22 unit + 39 e2e
 npm run test:unit
 npm run test:e2e # needs a running Docker daemon
 ```
 
 Unit tests cover the pure order rules — sizing, the accept/reject decision, the status
-transitions. Every DB-backed test runs against a throwaway Postgres 16 that
-`@testcontainers/postgresql` starts and seeds from `db/init.sql`; no test ever touches a
-shared database. Five of them pin concurrency: simultaneous buys against one balance,
+transitions — and the HTTP status each failure of a placement maps to. Every DB-backed test
+runs against a throwaway Postgres 16 that `@testcontainers/postgresql` starts and seeds
+from `db/init.sql`; no test ever touches a shared database. Five of them pin concurrency:
+simultaneous buys against one balance,
 simultaneous sells against one position, simultaneous cancels of one order, a placement
 blocked behind a held advisory lock, and a cancel settling beside a placement.
 
@@ -167,7 +168,7 @@ wanted.
 There is no market to simulate, so a MARKET order fills immediately at the `close` of the
 most recent `marketdata` row for that instrument (`ORDER BY date DESC LIMIT 1` — the seed
 carries two days of prices for every instrument that has any, so the ordering matters). Two
-seeded instruments carry no prices at all; an order for either is a 400 rather than a fill
+seeded equities carry no prices at all; an order for either is a 400 rather than a fill
 at an invented price.
 
 A LIMIT order is persisted as `NEW` at the price the user sent and stays there until it is
@@ -182,7 +183,10 @@ that reads the status handles the outcome; a 4xx would tell it the request was m
 which it was not.
 
 4xx is kept for what it means: **400** malformed or unfulfillable input, **404** unknown
-user, instrument or order, **409** an order whose status forbids the transition.
+user, instrument or order, **409** an order whose status forbids the transition. And one
+5xx is not a bug: **503** when the placement transaction runs out of its budget waiting for
+its turn behind the [advisory lock](#concurrency-one-advisory-lock-for-placement-a-conditional-update-for-cancellation)
+— the server is busy, and the same request is worth sending again.
 
 ### Concurrency: one advisory lock for placement, a conditional UPDATE for cancellation
 
@@ -199,6 +203,13 @@ the balance has to be read after the wait, and a repeatable-read snapshot would 
 and still show the cash the holder just spent. An e2e test holds the lock from a second
 connection, spends the balance there, and asserts the blocked placement wakes up
 `REJECTED`.
+
+The transaction carries an explicit budget — 5s to get a connection, 10s to run — because
+both bound queueing rather than work: the placement itself is half a dozen indexed
+statements. When either runs out Prisma raises `P2028`, and that is answered **503**, not
+500: a placement that never got its turn is a load condition, and the caller's order is
+intact to send again. The created row is read back from the `INSERT … RETURNING`, so the
+response reports what Postgres stored rather than a reconstruction of what was sent to it.
 
 Alternatives I did not take: `SERIALIZABLE` isolation is correct but turns a preventable
 conflict into a serialization failure every caller has to retry; an optimistic version
@@ -218,6 +229,25 @@ User 1 sold 30 BMA against 20 bought, so the fold yields quantity −10, marketV
 the account is short, and a portfolio endpoint that quietly disagrees with the ledger is
 worse than one that shows an uncomfortable number. New orders cannot deepen it — a sell
 beyond the held shares is `REJECTED`.
+
+### A position in an instrument with no market data is valued at 0
+
+`marketValue` is `ROUND(quantity × COALESCE(latest.close, 0), 2)`, so a holding of an
+instrument that carries no `marketdata` row at all — PGR and IRCP in the seed — is listed
+with its quantity and the cost basis its buys give it, a `marketValue` of `0.00` and a
+`null` total return, and contributes nothing to `totalValue`. Nothing this service does
+can create such a holding — the missing price is the same one that turns an order for
+either into [a 400](#market-executes-at-the-latest-close-limit-parks-at-its-price) — so
+the case only arrives with data loaded from outside the API.
+
+The alternative is to leave those lines out of `totalValue`, or to report their value as
+`null`, which states "price unknown" instead of implying "worth nothing". I did not take
+it: excluding the line hands back a total that no longer equals the sum of the positions
+shown above it, reporting `null` changes the type of a money field, and neither is worth a
+contract change for a case the seed never reaches. It is also the reading the [−10 BMA
+line](#the-seeds-10-bma-position-is-reported-honestly) already gets — the ledger is
+reported as it stands, the position visible rather than dropped, with only its price
+missing.
 
 ### Cash is the `MONEDA` instrument; `CASH_IN`/`CASH_OUT` are data, not an endpoint
 
@@ -280,11 +310,12 @@ No custom error envelope, no barrel files, no repository interface with a single
 implementation. Reads that need one shape are raw SQL: the portfolio fold is two
 `$queryRaw` calls, the cash balance and the positions, and the ranked search, the shares
 held of an instrument and the latest close are one each — the SQL says what it does more
-clearly than a stack of query-builder calls — and so is the conditional cancel above,
-because the guard belongs in the statement. Everything else goes through the Prisma
-client. The portfolio read runs at `REPEATABLE READ` so cash and positions come from one
-snapshot and an order settling mid-request cannot land in both halves of `totalValue`,
-or in neither.
+clearly than a stack of query-builder calls. So are the two writes, for reasons of their
+own: the conditional cancel puts its guard in the statement, and the placement's
+`INSERT … RETURNING` hands back the row the database ended up with. Everything else goes
+through the Prisma client. The portfolio read runs at `REPEATABLE READ` so cash and
+positions come from one snapshot and an order settling mid-request cannot land in both
+halves of `totalValue`, or in neither.
 
 ---
 
@@ -305,8 +336,8 @@ Two things about the provided schema are worth flagging:
   column for that table; the shipped `database.sql` — and the hosted database — have
   `date`. I followed the database.
 
-I did not modify the schema. `db/indexes.sql` holds the three indexes the queries in this
-service would want — `orders(userid)`, `orders(userid, instrumentid)` and
+I did not modify the schema. `db/indexes.sql` holds the two indexes the queries in this
+service would want — `orders(userid, instrumentid)` and
 `marketdata(instrumentid, date DESC)`, each with its justification — but they are **not**
 applied automatically, and they must be applied to a local database only, never to the
 shared challenge database:
@@ -345,5 +376,3 @@ Deliberate, and worth naming rather than leaving to be found:
    place the same order twice.
 3. **Pagination and a `pg_trgm` GIN index** for the search, which today is a `ILIKE '%…%'`
    scan capped at 20 rows.
-4. **Read-back of the created order** instead of reconstructing the response from the input,
-   so the payload is provably what the database stored.

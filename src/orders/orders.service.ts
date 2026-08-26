@@ -3,6 +3,7 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PortfolioRepository } from '../portfolio/portfolio.repository';
@@ -56,11 +57,28 @@ export class OrdersService {
     try {
       return await this.prisma.$transaction(
         (tx) => this.placeWithin(order, tx),
-        { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+          // Both bound queueing, not work: the placement is half a dozen indexed
+          // statements, so 5s waiting for a connection or 10s inside the advisory-lock
+          // queue means load, not a slow query.
+          maxWait: 5_000,
+          timeout: 10_000,
+        },
       );
     } catch (error) {
       if (error instanceof OrderRuleError) {
         throw new BadRequestException(error.message);
+      }
+      // P2028 is the transaction giving up on one of those two waits: the server is busy,
+      // not broken, and the caller's own order is intact to send again.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2028'
+      ) {
+        throw new ServiceUnavailableException(
+          'Order placement timed out waiting its turn, please retry',
+        );
       }
       throw error;
     }
@@ -134,31 +152,18 @@ export class OrdersService {
       size,
     });
 
-    const datetime = new Date();
-    const { id } = await tx.order.create({
-      data: {
-        userId: order.userId,
-        instrumentId: order.instrumentId,
-        side: order.side,
-        type: order.type,
-        size,
-        price,
-        status,
-        datetime,
-      },
-      select: { id: true },
-    });
+    const [created] = await tx.$queryRaw<OrderRow[]>`
+      INSERT INTO orders (instrumentid, userid, size, price, side, status, type, datetime)
+      VALUES (${order.instrumentId}, ${order.userId}, ${size}, ${price},
+              ${order.side}, ${status}, ${order.type}, ${new Date()})
+      RETURNING id, instrumentid AS "instrumentId", userid AS "userId",
+                side, size, price, type, status, datetime
+    `;
 
     return {
-      id,
-      instrumentId: order.instrumentId,
-      userId: order.userId,
-      side: order.side,
-      size,
-      price: price.toFixed(2),
-      type: order.type,
-      status,
-      datetime: datetime.toISOString(),
+      ...created,
+      price: created.price.toFixed(2),
+      datetime: created.datetime.toISOString(),
     };
   }
 
@@ -173,7 +178,8 @@ export class OrdersService {
         SELECT m.close
         FROM marketdata m
         WHERE m.instrumentid = i.id
-        ORDER BY m.date DESC
+        -- DESC alone sorts a NULL date first, and an undated row is not the latest close.
+        ORDER BY m.date DESC NULLS LAST
         LIMIT 1
       ) latest ON TRUE
       WHERE i.id = ${instrumentId}
