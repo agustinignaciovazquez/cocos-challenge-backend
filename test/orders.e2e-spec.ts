@@ -1,10 +1,12 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { OrderView } from '../src/orders/orders.service';
+import { Portfolio } from '../src/portfolio/portfolio.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { startTestDatabase } from './db';
 
@@ -12,11 +14,16 @@ const ARS = 66;
 const METR = 54;
 const PAMP = 47;
 const YPFD = 50;
+const OPEN_ORDER = 5;
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
 
 describe('Orders (e2e)', () => {
   let container: StartedPostgreSqlContainer;
   let app: INestApplication<App>;
   let prisma: PrismaService;
+  let outsider: PrismaClient;
 
   const post = (order: object): request.Test =>
     request(app.getHttpServer()).post('/orders').send(order);
@@ -26,11 +33,43 @@ describe('Orders (e2e)', () => {
     return response.body as OrderView;
   };
 
-  const availableCash = async (userId: number): Promise<string> => {
+  const portfolio = async (userId: number): Promise<Portfolio> => {
     const response = await request(app.getHttpServer())
       .get(`/users/${userId}/portfolio`)
       .expect(200);
-    return (response.body as { availableCash: string }).availableCash;
+    return response.body as Portfolio;
+  };
+
+  const availableCash = async (userId: number): Promise<string> =>
+    (await portfolio(userId)).availableCash;
+
+  // Opens a pooled connection per racer up front: against a cold pool the second request
+  // queues behind connection setup instead of overlapping the first, which would hide a
+  // missing lock rather than expose it.
+  const warmPool = (userId: number): Promise<string[]> =>
+    Promise.all([availableCash(userId), availableCash(userId)]);
+
+  // A blocked placement is invisible from the API — its query only returns once the lock
+  // frees — so the wait is read off pg_locks instead of timed.
+  const awaitAdvisoryLock = async (
+    userId: number,
+    granted: boolean,
+  ): Promise<void> => {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const [{ locks }] = await prisma.$queryRaw<[{ locks: number }]>`
+        SELECT count(*)::int AS locks
+        FROM pg_locks
+        WHERE locktype = 'advisory' AND objid::bigint = ${userId}
+          AND granted = ${granted}
+      `;
+      if (locks > 0) {
+        return;
+      }
+      await sleep(50);
+    }
+    throw new Error(
+      `No ${granted ? 'held' : 'waiting'} advisory lock on user ${userId}`,
+    );
   };
 
   beforeAll(async () => {
@@ -50,9 +89,11 @@ describe('Orders (e2e)', () => {
     // request, and a keep-alive socket reused across that close hangs the next request.
     await app.listen(0);
     prisma = app.get(PrismaService);
+    outsider = new PrismaClient();
   });
 
   afterAll(async () => {
+    await outsider?.$disconnect();
     await app?.close();
     await container?.stop();
   });
@@ -215,10 +256,7 @@ describe('Orders (e2e)', () => {
       type: 'MARKET',
       size: 5,
     };
-    // Opens a pooled connection for each buy up front: against a cold pool the second
-    // placement queues behind connection setup instead of overlapping the first, which
-    // would hide a missing lock rather than expose it.
-    await Promise.all([availableCash(2), availableCash(2)]);
+    await warmPool(2);
 
     const [first, second] = await Promise.all([place(buy), place(buy)]);
 
@@ -227,5 +265,110 @@ describe('Orders (e2e)', () => {
       'REJECTED',
     ]);
     expect(await availableCash(2)).toBe('1370.75');
+  });
+
+  it('lets only one of two concurrent sells through the shared position', async () => {
+    // 5 PAMP shares cover one 5-share sale at 925.85 but not a second.
+    await prisma.$executeRaw`
+      INSERT INTO orders (instrumentid, userid, size, price, side, status, type, datetime)
+      VALUES (${ARS}, 3, 100000, 1, 'CASH_IN', 'FILLED', 'MARKET', '2023-07-14 10:00:00'),
+             (${PAMP}, 3, 5, 900, 'BUY', 'FILLED', 'MARKET', '2023-07-14 10:01:00')
+    `;
+
+    const sell = {
+      userId: 3,
+      instrumentId: PAMP,
+      side: 'SELL',
+      type: 'MARKET',
+      size: 5,
+    };
+    await warmPool(3);
+
+    const [first, second] = await Promise.all([place(sell), place(sell)]);
+
+    expect([first.status, second.status].sort()).toEqual([
+      'FILLED',
+      'REJECTED',
+    ]);
+    // 100,000 in, 4,500 spent on the shares, 4,629.25 back from the single sale; the
+    // position folds to zero and never past it, so no position is left to report.
+    expect(await portfolio(3)).toMatchObject({
+      availableCash: '100129.25',
+      positions: [],
+    });
+  });
+
+  it('makes a placement wait for the lock holder and read what it spent', async () => {
+    await prisma.$executeRaw`
+      INSERT INTO orders (instrumentid, userid, size, price, side, status, type, datetime)
+      VALUES (${ARS}, 4, 5000, 1, 'CASH_IN', 'FILLED', 'MARKET', '2023-07-14 10:00:00')
+    `;
+
+    let release = (): void => {};
+    const held = new Promise<void>((resolve) => {
+      release = () => resolve();
+    });
+    // Holds the placement lock from a connection of its own and spends the balance before
+    // committing, so scheduling plays no part: the buy can only reject if it reads the
+    // balance after the wait, which is exactly what READ COMMITTED guarantees.
+    const holding = outsider.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(4)`;
+        await tx.$executeRaw`
+          INSERT INTO orders (instrumentid, userid, size, price, side, status, type, datetime)
+          VALUES (${ARS}, 4, 5000, 1, 'CASH_OUT', 'FILLED', 'MARKET', '2023-07-14 10:01:00')
+        `;
+        await held;
+      },
+      { timeout: 30_000 },
+    );
+    await awaitAdvisoryLock(4, true);
+
+    let settled = false;
+    const placement = post({
+      userId: 4,
+      instrumentId: PAMP,
+      side: 'BUY',
+      type: 'MARKET',
+      size: 5,
+    }).then((response) => {
+      settled = true;
+      return response;
+    });
+
+    await awaitAdvisoryLock(4, false);
+    expect(settled).toBe(false);
+
+    release();
+    await holding;
+
+    expect((await placement).body).toMatchObject({ status: 'REJECTED' });
+  });
+
+  it('settles a cancel beside a placement without moving cash', async () => {
+    const before = await availableCash(1);
+    await warmPool(1);
+
+    const [cancelled, placed] = await Promise.all([
+      request(app.getHttpServer())
+        .patch(`/orders/${OPEN_ORDER}/cancel`)
+        .expect(200),
+      place({
+        userId: 1,
+        instrumentId: PAMP,
+        side: 'BUY',
+        type: 'MARKET',
+        size: 5,
+      }),
+    ]);
+
+    expect((cancelled.body as OrderView).status).toBe('CANCELLED');
+    expect(placed.status).toBe('FILLED');
+    // The buy is the only thing that moved cash: a cancelled NEW order releases nothing
+    // because it reserved nothing.
+    const spent = new Prisma.Decimal(placed.price).times(placed.size);
+    expect(await availableCash(1)).toBe(
+      new Prisma.Decimal(before).minus(spent).toFixed(2),
+    );
   });
 });

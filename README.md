@@ -32,7 +32,7 @@ point `DATABASE_URL` at it — `.env.example` carries the commented line.
 ### Tests
 
 ```bash
-npm test         # 18 unit + 30 e2e
+npm test         # 18 unit + 33 e2e
 npm run test:unit
 npm run test:e2e # needs a running Docker daemon
 ```
@@ -40,8 +40,9 @@ npm run test:e2e # needs a running Docker daemon
 Unit tests cover the pure order rules — sizing, the accept/reject decision, the status
 transitions. Every DB-backed test runs against a throwaway Postgres 16 that
 `@testcontainers/postgresql` starts and seeds from `db/init.sql`; no test ever touches a
-shared database. Two of them are concurrency tests: simultaneous buys against one balance,
-and simultaneous cancels of one order.
+shared database. Five of them pin concurrency: simultaneous buys against one balance,
+simultaneous sells against one position, simultaneous cancels of one order, a placement
+blocked behind a held advisory lock, and a cancel settling beside a placement.
 
 `npm run lint` runs Prettier in check mode and then ESLint. CI
 ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `npm ci`, lint, build and the
@@ -165,8 +166,15 @@ Placement reads a balance and then writes an order that depends on it, so the tw
 interleave. The whole placement runs in one transaction that opens with
 `SELECT pg_advisory_xact_lock(userId)`: a user's orders are serialised against each other,
 different users never contend, and the lock is released with the transaction — there is
-nothing to clean up if the request dies. Two simultaneous buys against the same balance
-therefore produce one `FILLED` and one `REJECTED`, which is what the e2e suite asserts.
+nothing to clean up if the request dies. Two simultaneous buys against the same balance —
+or two sells against the same position — therefore produce one `FILLED` and one
+`REJECTED`, which is what the e2e suite asserts.
+
+The transaction is pinned to `READ COMMITTED`, which is what makes the lock mean anything:
+the balance has to be read after the wait, and a repeatable-read snapshot would predate it
+and still show the cash the holder just spent. An e2e test holds the lock from a second
+connection, spends the balance there, and asserts the blocked placement wakes up
+`REJECTED`.
 
 Alternatives I did not take: `SERIALIZABLE` isolation is correct but turns a preventable
 conflict into a serialization failure every caller has to retry; an optimistic version
@@ -175,7 +183,9 @@ column needs a balance row to version, and my balance is derived from the order 
 Cancellation needs no lock at all. The transition _is_ the UPDATE's predicate —
 `UPDATE orders SET status = 'CANCELLED' WHERE id = $1 AND status IN ('NEW') RETURNING …` —
 so of two concurrent cancels only one matches a row and the other reads back the current
-status to answer 409. Placement only ever INSERTs, so it cannot race with a cancel.
+status to answer 409. Placement only ever INSERTs, so it cannot race with a cancel, and
+cancelling moves no cash because a `NEW` order reserved none — the day reservation lands,
+cancel becomes balance-mutating and has to take the same lock.
 
 ### The seed's −10 BMA position is reported honestly
 

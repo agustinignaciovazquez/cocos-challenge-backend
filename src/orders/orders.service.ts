@@ -54,8 +54,9 @@ export class OrdersService {
 
   async place(order: PlaceOrderDto): Promise<OrderView> {
     try {
-      return await this.prisma.$transaction((tx) =>
-        this.placeWithin(order, tx),
+      return await this.prisma.$transaction(
+        (tx) => this.placeWithin(order, tx),
+        { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
       );
     } catch (error) {
       if (error instanceof OrderRuleError) {
@@ -67,7 +68,9 @@ export class OrdersService {
 
   async cancel(id: number): Promise<OrderView> {
     // The transition is the UPDATE's own condition, so concurrent cancels cannot both
-    // match the row and no lock is needed: placement only ever inserts.
+    // match the row and no lock is needed: placement only ever inserts. Should NEW orders
+    // ever reserve funds, cancel starts moving a balance and must take the same advisory
+    // lock placement holds.
     const [cancelled] = await this.prisma.$queryRaw<OrderRow[]>`
       UPDATE orders
       SET status = 'CANCELLED'
@@ -100,7 +103,9 @@ export class OrdersService {
     order: PlaceOrderDto,
     tx: Prisma.TransactionClient,
   ): Promise<OrderView> {
-    // Serialises a user's placements so two cannot both spend the same balance.
+    // Serialises a user's placements so two cannot both spend the same balance — which
+    // holds only under READ COMMITTED, where the balance is read after the wait: a
+    // repeatable-read snapshot predates the wait and would still show it unspent.
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(${order.userId})`;
 
     if (!(await this.portfolio.userExists(order.userId, tx))) {
