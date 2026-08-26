@@ -91,6 +91,10 @@ describe('Instruments (e2e)', () => {
       .expect(400);
   });
 
+  it('answers a lone backslash with an empty list', async () => {
+    expect(await search('\\')).toEqual([]);
+  });
+
   // Last, because it is the only case that needs a row the seed does not carry.
   it('searches for the wildcards and the escape as literal characters', async () => {
     await app.get(PrismaService).$executeRaw`

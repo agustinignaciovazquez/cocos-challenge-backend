@@ -34,7 +34,7 @@ server never opens a pool against a database that is still seeding.
 ### Tests
 
 ```bash
-npm test         # 22 unit + 39 e2e
+npm test         # 22 unit + 40 e2e
 npm run test:unit
 npm run test:e2e # needs a running Docker daemon
 ```
@@ -287,9 +287,9 @@ exponent form JavaScript prints below `1e-6` — the three ways a syntactically 
 used to come back a 500. A well-formed id that names nothing is still a 404: the range is
 about the shape of the request, not about what the database happens to hold.
 
-The search term is escaped before it reaches the `ILIKE` patterns. `%`, `_` and `\` are
-characters someone typed, not wildcards they get to use, and a term ending in `\` built a
-pattern Postgres refuses outright.
+The search term is never interpreted as a pattern: `position`, `starts_with` and `=`
+compare strings, so `%`, `_` and `\` are characters someone typed rather than wildcards
+they get to use — the escaping an `ILIKE` needs is gone rather than moved somewhere else.
 
 ### A MARKET order rejects an explicit price
 
@@ -374,5 +374,5 @@ Deliberate, and worth naming rather than leaving to be found:
    — the one behaviour that separates this from a real order book.
 2. **Idempotency keys on `POST /orders`**, so a client that retries after a timeout cannot
    place the same order twice.
-3. **Pagination and a `pg_trgm` GIN index** for the search, which today is a `ILIKE '%…%'`
-   scan capped at 20 rows.
+3. **Pagination and a `pg_trgm` GIN index** for the search, which today scans every
+   instrument for the substring and caps the answer at 20 rows.
