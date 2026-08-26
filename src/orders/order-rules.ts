@@ -1,5 +1,5 @@
-import { Prisma } from '@prisma/client';
 import { MAX_INT4 } from '../int4';
+import { apiString } from '../money';
 
 export const SIDES = ['BUY', 'SELL'] as const;
 export const ORDER_TYPES = ['MARKET', 'LIMIT'] as const;
@@ -18,21 +18,21 @@ export class OrderRuleError extends Error {}
 
 export type Sizing = {
   size?: number;
-  amount?: Prisma.Decimal;
-  price: Prisma.Decimal;
+  amount?: bigint;
+  price: bigint;
 };
 
 export type Placement = {
   side: Side;
   type: OrderType;
-  price?: Prisma.Decimal;
-  close: Prisma.Decimal;
-  availableCash: Prisma.Decimal;
+  price?: bigint;
+  close: bigint;
+  availableCash: bigint;
   heldShares: number;
   size: number;
 };
 
-export type Decision = { status: OrderStatus; price: Prisma.Decimal };
+export type Decision = { status: OrderStatus; price: bigint };
 
 const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   NEW: ['CANCELLED'],
@@ -49,19 +49,21 @@ export function resolveSize({ size, amount, price }: Sizing): number {
     return size;
   }
 
-  const shares = amount!.div(price).floor().toNumber();
-  if (shares === 0) {
+  // Money is positive here, so the truncation integer division already does is the floor
+  // whole shares are counted with.
+  const shares = amount! / price;
+  if (shares === 0n) {
     throw new OrderRuleError(
-      `An amount of ${amount!.toFixed(2)} buys no share at ${price.toFixed(2)}`,
+      `An amount of ${apiString(amount!)} buys no share at ${apiString(price)}`,
     );
   }
   // Both operands can be in range and the quotient still past what an order can hold.
-  if (shares > MAX_INT4) {
+  if (shares > BigInt(MAX_INT4)) {
     throw new OrderRuleError(
-      `An amount of ${amount!.toFixed(2)} buys more than ${MAX_INT4} shares at ${price.toFixed(2)}`,
+      `An amount of ${apiString(amount!)} buys more than ${MAX_INT4} shares at ${apiString(price)}`,
     );
   }
-  return shares;
+  return Number(shares);
 }
 
 export function decide({
@@ -76,7 +78,7 @@ export function decide({
   const executed = type === 'LIMIT' && price !== undefined ? price : close;
   const covered =
     side === 'BUY'
-      ? availableCash.greaterThanOrEqualTo(executed.times(size))
+      ? availableCash >= executed * BigInt(size)
       : heldShares >= size;
 
   const accepted = type === 'MARKET' ? 'FILLED' : 'NEW';

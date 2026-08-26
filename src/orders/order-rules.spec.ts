@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { apiString, centavosFromDb } from '../money';
 import {
   canTransition,
   decide,
@@ -7,11 +7,11 @@ import {
   resolveSize,
 } from './order-rules';
 
-const money = (value: string): Prisma.Decimal => new Prisma.Decimal(value);
+const money = (value: string): bigint => centavosFromDb(value);
 
 const outcome = (placement: Placement): string => {
   const decision = decide(placement);
-  return `${decision.status} @ ${decision.price.toFixed(2)}`;
+  return `${decision.status} @ ${apiString(decision.price)}`;
 };
 
 const buy: Placement = {

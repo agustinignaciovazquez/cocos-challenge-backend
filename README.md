@@ -34,13 +34,14 @@ server never opens a pool against a database that is still seeding.
 ### Tests
 
 ```bash
-npm test         # 22 unit + 40 e2e
+npm test         # 31 unit + 40 e2e
 npm run test:unit
 npm run test:e2e # needs a running Docker daemon
 ```
 
-Unit tests cover the pure order rules — sizing, the accept/reject decision, the status
-transitions — and the HTTP status each failure of a placement maps to. Every DB-backed test
+Unit tests cover the money conversions at their boundaries, the pure order rules — sizing,
+the accept/reject decision, the status transitions — and the HTTP status each failure of a
+placement maps to. Every DB-backed test
 runs against a throwaway Postgres 16 that `@testcontainers/postgresql` starts and seeds
 from `db/init.sql`; no test ever touches a shared database. Five of them pin concurrency:
 simultaneous buys against one balance,
@@ -298,11 +299,23 @@ sending one is a 400. Accepting a price and then silently ignoring it would exec
 number the caller did not ask for, and that is the kind of surprise a trading API should not
 have. LIMIT orders require a positive price of at most two decimals.
 
-### Money never becomes a JavaScript number
+### Money is an integer count of centavos
 
-Prices are `NUMERIC(10,2)` in the database, `Prisma.Decimal` in every calculation, and
-strings with two decimals in every response. No float ever holds pesos, and a client that
-parses JSON into doubles is not handed a value that has already lost precision.
+Pesos are never a JavaScript number. A price arrives as a validated two-decimal number,
+becomes a `bigint` count of centavos through its decimal string, and every calculation the
+application makes — dividing an amount into whole shares, weighing a buy against the
+balance, adding a portfolio up — is integer arithmetic on those centavos. The column is
+`NUMERIC(10, 2)`, which is exact decimal storage, and what goes back out is a string with
+two decimals. A client that parses JSON into doubles is never handed a value that has
+already lost precision.
+
+`bigint` rather than `number` because the widest thing the rules compute is a size times a
+price, and a max `INT4` size at the top of `NUMERIC(10, 2)` is roughly 2·10¹⁹ centavos —
+past the 2⁵³ a double counts exactly. Integers make the guarantee structural rather than
+something a library holds for me: there is no rounding mode to get wrong, and the three
+conversions in `src/money.ts` are the only places in the application where money changes
+shape. `Prisma.Decimal` is left with the single job it is good for here, carrying a
+`NUMERIC` value across the repository boundary; nothing does arithmetic on it.
 
 ### Nest's defaults, on purpose
 

@@ -1,7 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { apiString, centavosFromDb } from '../money';
 import { PrismaService } from '../prisma/prisma.service';
 import { PortfolioRepository } from './portfolio.repository';
+
+const twoDecimals = (value: Prisma.Decimal | null): string | null =>
+  value === null ? null : apiString(centavosFromDb(value));
 
 export type Position = {
   instrumentId: number;
@@ -41,19 +45,20 @@ export class PortfolioService {
       { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
     );
 
+    const availableCash = centavosFromDb(cash);
     const totalValue = holdings.reduce(
-      (total, holding) => total.plus(holding.marketValue),
-      cash,
+      (total, holding) => total + centavosFromDb(holding.marketValue),
+      availableCash,
     );
 
     return {
-      totalValue: totalValue.toFixed(2),
-      availableCash: cash.toFixed(2),
+      totalValue: apiString(totalValue),
+      availableCash: apiString(availableCash),
       positions: holdings.map((holding) => ({
         ...holding,
-        marketValue: holding.marketValue.toFixed(2),
-        avgCost: holding.avgCost?.toFixed(2) ?? null,
-        totalReturnPct: holding.totalReturnPct?.toFixed(2) ?? null,
+        marketValue: apiString(centavosFromDb(holding.marketValue)),
+        avgCost: twoDecimals(holding.avgCost),
+        totalReturnPct: twoDecimals(holding.totalReturnPct),
       })),
     };
   }

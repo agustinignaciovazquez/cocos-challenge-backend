@@ -6,6 +6,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { apiString, centavosFromApi, centavosFromDb } from '../money';
 import { PortfolioRepository } from '../portfolio/portfolio.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -43,8 +44,8 @@ const CANCELLABLE = ORDER_STATUSES.filter((status) =>
   canTransition(status, 'CANCELLED'),
 );
 
-const money = (value?: number): Prisma.Decimal | undefined =>
-  value === undefined ? undefined : new Prisma.Decimal(value);
+const centavos = (value?: number): bigint | undefined =>
+  value === undefined ? undefined : centavosFromApi(value);
 
 @Injectable()
 export class OrdersService {
@@ -112,7 +113,7 @@ export class OrdersService {
 
     return {
       ...cancelled,
-      price: cancelled.price.toFixed(2),
+      price: apiString(centavosFromDb(cancelled.price)),
       datetime: cancelled.datetime.toISOString(),
     };
   }
@@ -131,10 +132,10 @@ export class OrdersService {
     }
 
     const close = await this.tradableClose(order.instrumentId, tx);
-    const limitPrice = money(order.price);
+    const limitPrice = centavos(order.price);
     const size = resolveSize({
       size: order.size,
-      amount: money(order.amount),
+      amount: centavos(order.amount),
       price: limitPrice ?? close,
     });
 
@@ -143,7 +144,9 @@ export class OrdersService {
       type: order.type,
       price: limitPrice,
       close,
-      availableCash: await this.portfolio.availableCash(order.userId, tx),
+      availableCash: centavosFromDb(
+        await this.portfolio.availableCash(order.userId, tx),
+      ),
       heldShares: await this.portfolio.heldShares(
         order.userId,
         order.instrumentId,
@@ -154,7 +157,9 @@ export class OrdersService {
 
     const [created] = await tx.$queryRaw<OrderRow[]>`
       INSERT INTO orders (instrumentid, userid, size, price, side, status, type, datetime)
-      VALUES (${order.instrumentId}, ${order.userId}, ${size}, ${price},
+      -- Money leaves the application as its two-decimal string, and the cast is what binds
+      -- that as a number: the column refuses the text a string is otherwise sent as.
+      VALUES (${order.instrumentId}, ${order.userId}, ${size}, ${apiString(price)}::numeric,
               ${order.side}, ${status}, ${order.type}, ${new Date()})
       RETURNING id, instrumentid AS "instrumentId", userid AS "userId",
                 side, size, price, type, status, datetime
@@ -162,7 +167,7 @@ export class OrdersService {
 
     return {
       ...created,
-      price: created.price.toFixed(2),
+      price: apiString(centavosFromDb(created.price)),
       datetime: created.datetime.toISOString(),
     };
   }
@@ -170,7 +175,7 @@ export class OrdersService {
   private async tradableClose(
     instrumentId: number,
     tx: Prisma.TransactionClient,
-  ): Promise<Prisma.Decimal> {
+  ): Promise<bigint> {
     const [instrument] = await tx.$queryRaw<Quote[]>`
       SELECT i.type, latest.close
       FROM instruments i
@@ -198,6 +203,6 @@ export class OrdersService {
         `Instrument ${instrumentId} has no market data`,
       );
     }
-    return instrument.close;
+    return centavosFromDb(instrument.close);
   }
 }
