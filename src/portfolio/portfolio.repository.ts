@@ -98,9 +98,12 @@ export class PortfolioRepository {
         SELECT m.close
         FROM marketdata m
         WHERE m.instrumentid = n.instrumentid
-        ORDER BY m.date DESC
+        -- DESC alone sorts a NULL date first, and an undated row is not the latest close.
+        ORDER BY m.date DESC NULLS LAST
         LIMIT 1
       ) latest ON TRUE
+      -- Cash is the availableCash line, never a position, whatever side an order carries.
+      WHERE i.type IS DISTINCT FROM 'MONEDA'
       ORDER BY i.ticker
     `;
   }

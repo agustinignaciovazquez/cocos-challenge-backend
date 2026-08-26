@@ -4,6 +4,9 @@
   "description": "Trading API for the Cocos Capital backend challenge",
   "license": "UNLICENSED",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "nest build",
     "start": "nest start",

@@ -12,16 +12,18 @@ testcontainers.
 ## Quickstart
 
 ```bash
-npm install                # postinstall runs `prisma generate`
-cp .env.example .env       # DATABASE_URL for the compose database below
-docker compose up -d       # Postgres 16 on :5433, seeded from db/init.sql on first boot
-npm run start:dev          # http://localhost:3000
+npm install                 # postinstall runs `prisma generate`
+cp .env.example .env        # DATABASE_URL for the compose database below
+docker compose up -d --wait # Postgres 16 on :5433, seeded from db/init.sql on first boot
+npm run start:dev           # http://localhost:3000
 ```
 
 That is the whole setup: compose seeds the database itself, so there is no migration step
-and nothing to import by hand. `docker compose down -v` throws the data away and the next
-`up` reseeds from `db/init.sql`. To run against the challenge's hosted database instead,
-point `DATABASE_URL` at it — `.env.example` carries the commented line.
+and nothing to import by hand; `--wait` holds until the healthcheck passes, so the dev
+server never opens a pool against a database that is still seeding.
+`docker compose down -v` throws the data away and the next `up` reseeds from
+`db/init.sql`. To run against the challenge's hosted database instead, point
+`DATABASE_URL` at it — `.env.example` carries the commented line.
 
 - Interactive docs: <http://localhost:3000/docs> (OpenAPI JSON at `/docs-json`)
 - Ready-to-send calls: [`requests.http`](requests.http) — 33 cases, every endpoint with
@@ -71,6 +73,24 @@ string with two decimals.
   "availableCash": "753000.00",
   "positions": [
     {
+      "instrumentId": 31,
+      "ticker": "BMA",
+      "name": "Banco Macro S.A.",
+      "quantity": -10,
+      "marketValue": "-15028.00",
+      "avgCost": "1540.00",
+      "totalReturnPct": null
+    },
+    {
+      "instrumentId": 54,
+      "ticker": "METR",
+      "name": "MetroGAS S.A.",
+      "quantity": 500,
+      "marketValue": "114750.00",
+      "avgCost": "250.00",
+      "totalReturnPct": "-8.20"
+    },
+    {
       "instrumentId": 47,
       "ticker": "PAMP",
       "name": "Pampa Holding S.A.",
@@ -82,6 +102,10 @@ string with two decimals.
   ]
 }
 ```
+
+`totalValue` is the cash plus every position at its latest close — 753000 + 37034 +
+114750 − 15028 = 889756. The short BMA line is [the seed's own arithmetic, reported
+rather than hidden](#the-seeds-10-bma-position-is-reported-honestly).
 
 **`POST /orders`** — `size` **or** `amount` (pesos), never both:
 
@@ -253,12 +277,14 @@ parses JSON into doubles is not handed a value that has already lost precision.
 ### Nest's defaults, on purpose
 
 No custom error envelope, no barrel files, no repository interface with a single
-implementation. Reads that need one shape (the portfolio fold, the ranked search, the latest
-close) are one `$queryRaw` each — the SQL says what it does more clearly than a stack of
-query-builder calls — and so is the conditional cancel above, because the guard belongs in
-the statement. Everything else goes through the Prisma client. The portfolio read runs at
-`REPEATABLE READ` so cash and positions come from one snapshot and an order settling
-mid-request cannot land in both halves of `totalValue`, or in neither.
+implementation. Reads that need one shape are raw SQL: the portfolio fold is two
+`$queryRaw` calls, the cash balance and the positions, and the ranked search, the shares
+held of an instrument and the latest close are one each — the SQL says what it does more
+clearly than a stack of query-builder calls — and so is the conditional cancel above,
+because the guard belongs in the statement. Everything else goes through the Prisma
+client. The portfolio read runs at `REPEATABLE READ` so cash and positions come from one
+snapshot and an order settling mid-request cannot land in both halves of `totalValue`,
+or in neither.
 
 ---
 
@@ -280,7 +306,7 @@ Two things about the provided schema are worth flagging:
   `date`. I followed the database.
 
 I did not modify the schema. `db/indexes.sql` holds the three indexes the queries in this
-service would want — `orders(userid)`, `orders(instrumentid)` and
+service would want — `orders(userid)`, `orders(userid, instrumentid)` and
 `marketdata(instrumentid, date DESC)`, each with its justification — but they are **not**
 applied automatically, and they must be applied to a local database only, never to the
 shared challenge database:
