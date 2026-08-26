@@ -1,10 +1,11 @@
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
+import { configureApp } from '../src/configure-app';
 import { OrderView } from '../src/orders/orders.service';
 import { Portfolio } from '../src/portfolio/portfolio.service';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -81,9 +82,7 @@ describe('Orders (e2e)', () => {
     }).compile();
 
     app = moduleRef.createNestApplication();
-    app.useGlobalPipes(
-      new ValidationPipe({ whitelist: true, transform: true }),
-    );
+    configureApp(app);
     await app.init();
     // One listener for the whole suite: supertest otherwise opens and closes one per
     // request, and a keep-alive socket reused across that close hangs the next request.
@@ -224,6 +223,8 @@ describe('Orders (e2e)', () => {
     await post({ ...buy, type: 'STOP', size: 10 }).expect(400);
     await post({ ...buy, type: 'LIMIT', price: 900.123, size: 10 }).expect(400);
     await post({ ...buy, type: 'MARKET', amount: 100.999 }).expect(400);
+    await post({ ...buy, type: 'MARKET', amount: null }).expect(400);
+    await post({ ...buy, type: 'MARKET', size: null }).expect(400);
     await post({
       userId: 1,
       instrumentId: PAMP,
@@ -232,6 +233,47 @@ describe('Orders (e2e)', () => {
     }).expect(400);
 
     expect(await prisma.order.count()).toBe(before);
+  });
+
+  it('rejects ids past the range of the id columns, persisting nothing', async () => {
+    const before = await prisma.order.count();
+    const buy = { side: 'BUY', type: 'MARKET', size: 10 };
+    const tooBig = 9_999_999_999;
+
+    await post({ ...buy, userId: tooBig, instrumentId: PAMP }).expect(400);
+    await post({ ...buy, userId: 1, instrumentId: tooBig }).expect(400);
+
+    expect(await prisma.order.count()).toBe(before);
+  });
+
+  it('rejects money and sizes the columns cannot hold, persisting nothing', async () => {
+    const before = await prisma.order.count();
+    const buy = { userId: 1, instrumentId: PAMP, side: 'BUY' };
+
+    await post({ ...buy, type: 'MARKET', size: 9_999_999_999 }).expect(400);
+    await post({ ...buy, type: 'MARKET', amount: 1e-7 }).expect(400);
+    await post({ ...buy, type: 'MARKET', amount: 1e21 }).expect(400);
+    await post({ ...buy, type: 'LIMIT', price: 1e-7, size: 10 }).expect(400);
+    await post({ ...buy, type: 'LIMIT', price: 1e21, size: 10 }).expect(400);
+    await post({
+      ...buy,
+      type: 'LIMIT',
+      price: 0.01,
+      amount: 99999999.99,
+    }).expect(400);
+
+    expect(await prisma.order.count()).toBe(before);
+  });
+
+  it('answers 400 before 404 when a malformed order names an unknown user', async () => {
+    await post({
+      userId: 999,
+      instrumentId: PAMP,
+      side: 'BUY',
+      type: 'MARKET',
+      size: 10,
+      amount: 10000,
+    }).expect(400);
   });
 
   it('rejects an unknown user or instrument, and the currency itself', async () => {

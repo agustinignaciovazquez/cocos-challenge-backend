@@ -1,9 +1,11 @@
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
+import { configureApp } from '../src/configure-app';
+import { PrismaService } from '../src/prisma/prisma.service';
 import { startTestDatabase } from './db';
 
 type InstrumentRow = { id: number; ticker: string; name: string; type: string };
@@ -32,10 +34,11 @@ describe('Instruments (e2e)', () => {
     }).compile();
 
     app = moduleRef.createNestApplication();
-    app.useGlobalPipes(
-      new ValidationPipe({ whitelist: true, transform: true }),
-    );
+    configureApp(app);
     await app.init();
+    // One listener for the whole suite: supertest otherwise opens and closes one per
+    // request, and a keep-alive socket reused across that close hangs the next request.
+    await app.listen(0);
   });
 
   afterAll(async () => {
@@ -76,11 +79,27 @@ describe('Instruments (e2e)', () => {
     expect(await search('a')).toHaveLength(20);
   });
 
-  it('rejects a missing or blank q', async () => {
+  it('rejects a missing, blank or oversized q', async () => {
     await request(app.getHttpServer()).get('/instruments').expect(400);
     await request(app.getHttpServer())
       .get('/instruments')
       .query({ q: '   ' })
       .expect(400);
+    await request(app.getHttpServer())
+      .get('/instruments')
+      .query({ q: 'a'.repeat(101) })
+      .expect(400);
+  });
+
+  // Last, because it is the only case that needs a row the seed does not carry.
+  it('searches for the wildcards and the escape as literal characters', async () => {
+    await app.get(PrismaService).$executeRaw`
+      INSERT INTO instruments (ticker, "name", "type")
+      VALUES ('PCT%', 'Percent _ and \\ S.A.', 'ACCIONES')
+    `;
+
+    expect(await tickers('%')).toEqual(['PCT%']);
+    expect(await tickers('_')).toEqual(['PCT%']);
+    expect(await tickers('\\')).toEqual(['PCT%']);
   });
 });

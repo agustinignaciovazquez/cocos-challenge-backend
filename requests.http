@@ -30,6 +30,9 @@ GET {{baseUrl}}/users/999/portfolio
 ### 400: the user id must be a number
 GET {{baseUrl}}/users/abc/portfolio
 
+### 400: an id beyond the range of the id column is turned away, not looked up
+GET {{baseUrl}}/users/9999999999/portfolio
+
 ### 201 FILLED: a market buy executes at the latest close
 POST {{baseUrl}}/orders
 Content-Type: application/json
@@ -119,6 +122,12 @@ POST {{baseUrl}}/orders
 Content-Type: application/json
 
 { "userId": 1, "instrumentId": 66, "side": "BUY", "type": "MARKET", "size": 10 }
+
+### 400: an instrument with no market data has no price to execute at
+POST {{baseUrl}}/orders
+Content-Type: application/json
+
+{ "userId": 1, "instrumentId": 3, "side": "BUY", "type": "MARKET", "size": 10 }
 
 ### 404: an order for an unknown user
 POST {{baseUrl}}/orders

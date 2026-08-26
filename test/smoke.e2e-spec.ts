@@ -4,6 +4,7 @@ import { StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
+import { configureApp } from '../src/configure-app';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { startTestDatabase } from './db';
 
@@ -20,12 +21,16 @@ describe('Scaffold (e2e)', () => {
     }).compile();
 
     app = moduleRef.createNestApplication();
+    configureApp(app);
     await app.init();
+    // One listener for the whole suite: supertest otherwise opens and closes one per
+    // request, and a keep-alive socket reused across that close hangs the next request.
+    await app.listen(0);
   });
 
   afterAll(async () => {
-    await app.close();
-    await container.stop();
+    await app?.close();
+    await container?.stop();
   });
 
   it('GET /health returns ok', async () => {

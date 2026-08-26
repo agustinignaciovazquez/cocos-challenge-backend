@@ -42,6 +42,12 @@ describe('resolveSize', () => {
     ).toThrow(OrderRuleError);
   });
 
+  it('rejects an amount that buys more shares than an order can hold', () => {
+    expect(() =>
+      resolveSize({ amount: money('99999999.99'), price: money('0.01') }),
+    ).toThrow(OrderRuleError);
+  });
+
   it('rejects a request carrying both a size and an amount', () => {
     expect(() =>
       resolveSize({ size: 10, amount: money('10000'), price: money('925.85') }),

@@ -1,9 +1,10 @@
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
+import { configureApp } from '../src/configure-app';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { startTestDatabase } from './db';
 
@@ -34,9 +35,7 @@ describe('Order cancellation (e2e)', () => {
     }).compile();
 
     app = moduleRef.createNestApplication();
-    app.useGlobalPipes(
-      new ValidationPipe({ whitelist: true, transform: true }),
-    );
+    configureApp(app);
     await app.init();
     // One listener for the whole suite: supertest otherwise opens and closes one per
     // request, and a keep-alive socket reused across that close hangs the next request.
@@ -82,6 +81,10 @@ describe('Order cancellation (e2e)', () => {
 
   it('rejects an id that is not a number', async () => {
     await cancel('abc').expect(400);
+  });
+
+  it('rejects an id past the range of the id column', async () => {
+    await cancel('9999999999').expect(400);
   });
 
   it('lets only one of two concurrent cancels through', async () => {

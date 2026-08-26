@@ -24,7 +24,7 @@ and nothing to import by hand. `docker compose down -v` throws the data away and
 point `DATABASE_URL` at it — `.env.example` carries the commented line.
 
 - Interactive docs: <http://localhost:3000/docs> (OpenAPI JSON at `/docs-json`)
-- Ready-to-send calls: [`requests.http`](requests.http) — 31 cases, every endpoint with
+- Ready-to-send calls: [`requests.http`](requests.http) — 33 cases, every endpoint with
   its happy and failure paths, for the VS Code REST Client extension
 
 `npm run start:prod` serves the compiled build; `PORT` overrides the port.
@@ -32,7 +32,7 @@ point `DATABASE_URL` at it — `.env.example` carries the commented line.
 ### Tests
 
 ```bash
-npm test         # 18 unit + 33 e2e
+npm test         # 19 unit + 39 e2e
 npm run test:unit
 npm run test:e2e # needs a running Docker daemon
 ```
@@ -214,7 +214,28 @@ A request carries exactly one of the two — both, or neither, is a 400. An `amo
 becomes `floor(amount / price)` shares, priced at the close for MARKET and at the limit for
 LIMIT. If the amount does not reach a single share the answer is **400 and nothing is
 persisted**: unlike a rejection, there is no order here for the market to have an opinion
-about.
+about. So is an amount that reaches more shares than the `size` column can hold — a price
+and an amount can both be in range and still divide into a number that is not.
+
+The exclusivity is settled on the DTO rather than inside the sizing it feeds, so a
+malformed order is turned away before it opens a transaction or takes the placement lock,
+and `{ size, amount, userId: 999 }` answers 400 for being malformed instead of 404 for a
+user it should never have looked up. `resolveSize` keeps the same rule as its own
+precondition — it is true of the function whoever calls it.
+
+### Input is bounded in the shape the columns actually have
+
+Every id and every `size` is an `INT` column and every price is `NUMERIC(10, 2)`, so that is
+what the DTO and the `:id` pipe ask for: integers in `[1, 2147483647]`, money between `0.01`
+and `99999999.99` with at most two decimals. Outside those ranges the answer is a **400** at
+the boundary instead of a bind error, a numeric overflow, or a validator throwing on the
+exponent form JavaScript prints below `1e-6` — the three ways a syntactically valid request
+used to come back a 500. A well-formed id that names nothing is still a 404: the range is
+about the shape of the request, not about what the database happens to hold.
+
+The search term is escaped before it reaches the `ILIKE` patterns. `%`, `_` and `\` are
+characters someone typed, not wildcards they get to use, and a term ending in `\` built a
+pattern Postgres refuses outright.
 
 ### A MARKET order rejects an explicit price
 
@@ -284,16 +305,8 @@ runtime dependencies of its own, so nothing on the served path is affected. (`np
 
 ## Known limitations
 
-Found while testing, left in deliberately rather than patched over:
+Deliberate, and worth naming rather than leaving to be found:
 
-- **Ids beyond `int32` answer 500.** `/users/9999999999/portfolio` and
-  `/orders/9999999999/cancel` reach Postgres as an out-of-range integer instead of being
-  turned away at the boundary. The fix is one shared bounded-int pipe on every `:id` route
-  and on the order DTO.
-- **Extreme `amount` or `price` values answer 500.** Below `1e-6`, class-validator's
-  `maxDecimalPlaces` check throws on the exponent form JavaScript renders (`1e-7`) instead
-  of failing the validation; above the range of `NUMERIC(10,2)` the value clears validation
-  and only the database turns it down. Both should be 400s from a bounded numeric rule.
 - **No reservation of funds for `NEW` orders** — see the first decision above.
 - **No pagination on the search.** It returns the 20 best matches and stops.
 - **No authentication**, which the challenge puts out of scope: `userId` is trusted input.
@@ -306,6 +319,5 @@ Found while testing, left in deliberately rather than patched over:
    place the same order twice.
 3. **Pagination and a `pg_trgm` GIN index** for the search, which today is a `ILIKE '%…%'`
    scan capped at 20 rows.
-4. **Bounded integers and numerics at the DTO boundary**, closing the two 500s above.
-5. **Read-back of the created order** instead of reconstructing the response from the input,
+4. **Read-back of the created order** instead of reconstructing the response from the input,
    so the payload is provably what the database stored.

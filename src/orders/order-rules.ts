@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { MAX_INT4 } from '../int4';
 
 export const SIDES = ['BUY', 'SELL'] as const;
 export const ORDER_TYPES = ['MARKET', 'LIMIT'] as const;
@@ -52,6 +53,12 @@ export function resolveSize({ size, amount, price }: Sizing): number {
   if (shares === 0) {
     throw new OrderRuleError(
       `An amount of ${amount!.toFixed(2)} buys no share at ${price.toFixed(2)}`,
+    );
+  }
+  // Both operands can be in range and the quotient still past what an order can hold.
+  if (shares > MAX_INT4) {
+    throw new OrderRuleError(
+      `An amount of ${amount!.toFixed(2)} buys more than ${MAX_INT4} shares at ${price.toFixed(2)}`,
     );
   }
   return shares;

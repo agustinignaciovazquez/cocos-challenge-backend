@@ -1,5 +1,6 @@
-import { Controller, Get, Param, ParseIntPipe } from '@nestjs/common';
+import { Controller, Get, Param } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import { ParseIdPipe } from '../parse-id.pipe';
 import { Portfolio, PortfolioService } from './portfolio.service';
 
 @ApiTags('portfolio')
@@ -8,7 +9,7 @@ export class PortfolioController {
   constructor(private readonly portfolio: PortfolioService) {}
 
   @Get(':id/portfolio')
-  get(@Param('id', ParseIntPipe) userId: number): Promise<Portfolio> {
+  get(@Param('id', ParseIdPipe) userId: number): Promise<Portfolio> {
     return this.portfolio.forUser(userId);
   }
 }

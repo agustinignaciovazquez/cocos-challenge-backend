@@ -1,12 +1,6 @@
-import {
-  Body,
-  Controller,
-  Param,
-  ParseIntPipe,
-  Patch,
-  Post,
-} from '@nestjs/common';
+import { Body, Controller, Param, Patch, Post } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import { ParseIdPipe } from '../parse-id.pipe';
 import { OrderView, OrdersService } from './orders.service';
 import { PlaceOrderDto } from './place-order.dto';
 
@@ -21,7 +15,7 @@ export class OrdersController {
   }
 
   @Patch(':id/cancel')
-  cancel(@Param('id', ParseIntPipe) id: number): Promise<OrderView> {
+  cancel(@Param('id', ParseIdPipe) id: number): Promise<OrderView> {
     return this.orders.cancel(id);
   }
 }

@@ -1,5 +1,5 @@
 import { Transform, TransformFnParams } from 'class-transformer';
-import { IsString, MinLength } from 'class-validator';
+import { IsString, MaxLength, MinLength } from 'class-validator';
 
 export class SearchInstrumentsDto {
   @Transform(({ value }: TransformFnParams): unknown =>
@@ -7,5 +7,6 @@ export class SearchInstrumentsDto {
   )
   @IsString()
   @MinLength(1)
+  @MaxLength(100)
   q!: string;
 }
