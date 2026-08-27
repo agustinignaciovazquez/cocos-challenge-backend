@@ -1,3 +1,4 @@
+import { MAX_INT4 } from '../int4';
 import { apiString, centavosFromDb } from '../money';
 import {
   canTransition,
@@ -42,9 +43,24 @@ describe('resolveSize', () => {
     ).toThrow(OrderRuleError);
   });
 
+  it('takes an amount that reaches exactly the largest size an order holds', () => {
+    expect(
+      resolveSize({ amount: money('214748364.70'), price: money('0.10') }),
+    ).toBe(MAX_INT4);
+  });
+
   it('rejects an amount that buys more shares than an order can hold', () => {
     expect(() =>
+      resolveSize({ amount: money('214748364.80'), price: money('0.10') }),
+    ).toThrow(OrderRuleError);
+    expect(() =>
       resolveSize({ amount: money('99999999.99'), price: money('0.01') }),
+    ).toThrow(OrderRuleError);
+  });
+
+  it('rejects an amount at a price no number of shares divides into', () => {
+    expect(() =>
+      resolveSize({ amount: money('10000'), price: money('0') }),
     ).toThrow(OrderRuleError);
   });
 

@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 // `bigint` because the widest one is a size times a price: a max INT4 size at the top
 // NUMERIC(10, 2) price is 2147483647 × 9999999999 ≈ 2·10^19 centavos, past the 2^53 a
 // `number` holds exactly.
+
 const PESOS = /^(-?)(\d+)(?:\.(\d{1,2}))?$/;
 
 export function centavosFromDb(value: Prisma.Decimal | string): bigint {

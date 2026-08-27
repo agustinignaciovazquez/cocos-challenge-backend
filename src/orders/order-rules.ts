@@ -49,21 +49,21 @@ export function resolveSize({ size, amount, price }: Sizing): number {
     return size;
   }
 
-  // Money is positive here, so the truncation integer division already does is the floor
-  // whole shares are counted with.
-  const shares = amount! / price;
-  if (shares === 0n) {
+  // Whole shares are the floor of amount over price — for positive money, the truncation
+  // integer division already does. The bounds are asked of the operands rather than of the
+  // quotient: both can be in range with the quotient still past what an order can hold, and
+  // a price of 0.00 lands there instead of in a division by zero.
+  if (amount! < price) {
     throw new OrderRuleError(
       `An amount of ${apiString(amount!)} buys no share at ${apiString(price)}`,
     );
   }
-  // Both operands can be in range and the quotient still past what an order can hold.
-  if (shares > BigInt(MAX_INT4)) {
+  if (amount! >= price * (BigInt(MAX_INT4) + 1n)) {
     throw new OrderRuleError(
       `An amount of ${apiString(amount!)} buys more than ${MAX_INT4} shares at ${apiString(price)}`,
     );
   }
-  return Number(shares);
+  return Number(amount! / price);
 }
 
 export function decide({

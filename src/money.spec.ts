@@ -55,8 +55,16 @@ describe('apiString', () => {
   });
 
   it('round-trips every value a request can carry', () => {
-    for (const value of [0.01, 1, 99.9, 925.85, 99_999_999.99]) {
-      expect(apiString(centavosFromApi(value))).toBe(value.toFixed(2));
+    const written: [number, string][] = [
+      [0.01, '0.01'],
+      [1, '1.00'],
+      [99.9, '99.90'],
+      [925.85, '925.85'],
+      [99_999_999.99, '99999999.99'],
+    ];
+
+    for (const [value, expected] of written) {
+      expect(apiString(centavosFromApi(value))).toBe(expected);
     }
   });
 });

@@ -14,30 +14,14 @@ import {
   decide,
   OrderRuleError,
   ORDER_STATUSES,
-  OrderStatus,
-  OrderType,
   resolveSize,
-  Side,
 } from './order-rules';
+import { OrderRow, OrdersRepository } from './orders.repository';
 import { PlaceOrderDto } from './place-order.dto';
 
-export type OrderView = {
-  id: number;
-  instrumentId: number;
-  userId: number;
-  side: Side;
-  size: number;
+export type OrderView = Omit<OrderRow, 'price' | 'datetime'> & {
   price: string;
-  type: OrderType;
-  status: OrderStatus;
   datetime: string;
-};
-
-type Quote = { type: string | null; close: Prisma.Decimal | null };
-
-type OrderRow = Omit<OrderView, 'price' | 'datetime'> & {
-  price: Prisma.Decimal;
-  datetime: Date;
 };
 
 const CANCELLABLE = ORDER_STATUSES.filter((status) =>
@@ -51,6 +35,9 @@ const centavos = (value?: number): bigint | undefined =>
 export class OrdersService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly repository: OrdersRepository,
+    // The portfolio folds decide placements so the number that accepts an order is the
+    // same number the portfolio displays — duplicating those sums would let them drift.
     private readonly portfolio: PortfolioRepository,
   ) {}
 
@@ -90,24 +77,15 @@ export class OrdersService {
     // match the row and no lock is needed: placement only ever inserts. Should NEW orders
     // ever reserve funds, cancel starts moving a balance and must take the same advisory
     // lock placement holds.
-    const [cancelled] = await this.prisma.$queryRaw<OrderRow[]>`
-      UPDATE orders
-      SET status = 'CANCELLED'
-      WHERE id = ${id} AND status IN (${Prisma.join(CANCELLABLE)})
-      RETURNING id, instrumentid AS "instrumentId", userid AS "userId",
-                side, size, price, type, status, datetime
-    `;
+    const cancelled = await this.repository.cancel(id, CANCELLABLE);
 
     if (cancelled === undefined) {
-      const order = await this.prisma.order.findUnique({
-        where: { id },
-        select: { status: true },
-      });
-      if (order === null) {
+      const status = await this.repository.statusOf(id);
+      if (status === undefined) {
         throw new NotFoundException(`Order ${id} not found`);
       }
       throw new ConflictException(
-        `Order ${id} is ${order.status} and cannot be cancelled`,
+        `Order ${id} is ${status} and cannot be cancelled`,
       );
     }
 
@@ -125,7 +103,7 @@ export class OrdersService {
     // Serialises a user's placements so two cannot both spend the same balance — which
     // holds only under READ COMMITTED, where the balance is read after the wait: a
     // repeatable-read snapshot predates the wait and would still show it unspent.
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${order.userId})`;
+    await this.repository.lockPlacements(order.userId, tx);
 
     if (!(await this.portfolio.userExists(order.userId, tx))) {
       throw new NotFoundException(`User ${order.userId} not found`);
@@ -155,15 +133,18 @@ export class OrdersService {
       size,
     });
 
-    const [created] = await tx.$queryRaw<OrderRow[]>`
-      INSERT INTO orders (instrumentid, userid, size, price, side, status, type, datetime)
-      -- Money leaves the application as its two-decimal string, and the cast is what binds
-      -- that as a number: the column refuses the text a string is otherwise sent as.
-      VALUES (${order.instrumentId}, ${order.userId}, ${size}, ${apiString(price)}::numeric,
-              ${order.side}, ${status}, ${order.type}, ${new Date()})
-      RETURNING id, instrumentid AS "instrumentId", userid AS "userId",
-                side, size, price, type, status, datetime
-    `;
+    const created = await this.repository.insert(
+      {
+        instrumentId: order.instrumentId,
+        userId: order.userId,
+        side: order.side,
+        size,
+        price,
+        type: order.type,
+        status,
+      },
+      tx,
+    );
 
     return {
       ...created,
@@ -176,19 +157,7 @@ export class OrdersService {
     instrumentId: number,
     tx: Prisma.TransactionClient,
   ): Promise<bigint> {
-    const [instrument] = await tx.$queryRaw<Quote[]>`
-      SELECT i.type, latest.close
-      FROM instruments i
-      LEFT JOIN LATERAL (
-        SELECT m.close
-        FROM marketdata m
-        WHERE m.instrumentid = i.id
-        -- DESC alone sorts a NULL date first, and an undated row is not the latest close.
-        ORDER BY m.date DESC NULLS LAST
-        LIMIT 1
-      ) latest ON TRUE
-      WHERE i.id = ${instrumentId}
-    `;
+    const instrument = await this.repository.quote(instrumentId, tx);
 
     if (instrument === undefined) {
       throw new NotFoundException(`Instrument ${instrumentId} not found`);

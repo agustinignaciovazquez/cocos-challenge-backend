@@ -34,7 +34,7 @@ server never opens a pool against a database that is still seeding.
 ### Tests
 
 ```bash
-npm test         # 31 unit + 40 e2e
+npm test         # 33 unit + 40 e2e
 npm run test:unit
 npm run test:e2e # needs a running Docker daemon
 ```
@@ -320,15 +320,26 @@ shape. `Prisma.Decimal` is left with the single job it is good for here, carryin
 ### Nest's defaults, on purpose
 
 No custom error envelope, no barrel files, no repository interface with a single
-implementation. Reads that need one shape are raw SQL: the portfolio fold is two
-`$queryRaw` calls, the cash balance and the positions, and the ranked search, the shares
-held of an instrument and the latest close are one each — the SQL says what it does more
-clearly than a stack of query-builder calls. So are the two writes, for reasons of their
-own: the conditional cancel puts its guard in the statement, and the placement's
-`INSERT … RETURNING` hands back the row the database ended up with. Everything else goes
-through the Prisma client. The portfolio read runs at `REPEATABLE READ` so cash and
-positions come from one snapshot and an order settling mid-request cannot land in both
-halves of `totalValue`, or in neither.
+implementation. Every statement lives in a repository — one per module — and each method a
+transaction reaches takes the transaction client as an optional last argument, so a service
+can hand it the transaction it opened and the same method still serves a caller outside
+one. The instrument search takes no client at all, because nothing runs it inside a
+transaction; the advisory lock requires one, because a lock taken outside a transaction is
+released with the statement that takes it. What stays in a service is what a service
+decides — the transaction and its isolation level, when to take that lock, what makes an
+instrument tradable, which statuses a cancel may come from, how many rows a search returns
+— and rows cross the boundary in the database's own types for the service to render.
+
+Reads that need one shape are raw SQL: the portfolio fold is two `$queryRaw` calls, the
+cash balance and the positions, and the ranked search, the shares held of an instrument
+and the latest close are one each — the SQL says what it does more clearly than a stack of
+query-builder calls. So are the two writes, for reasons of their own: the conditional
+cancel puts its guard in the statement, and the placement's `INSERT … RETURNING` hands
+back the row the database ended up with. The advisory lock is the one raw statement that
+is neither read nor write. Everything else goes through the Prisma client.
+The portfolio read runs at `REPEATABLE READ` so cash and positions come from one snapshot
+and an order settling mid-request cannot land in both halves of `totalValue`, or in
+neither.
 
 ---
 

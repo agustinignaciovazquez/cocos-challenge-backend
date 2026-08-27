@@ -6,6 +6,7 @@ import { Prisma } from '@prisma/client';
 import { PortfolioRepository } from '../portfolio/portfolio.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrderRuleError } from './order-rules';
+import { OrdersRepository } from './orders.repository';
 import { OrdersService } from './orders.service';
 import { PlaceOrderDto } from './place-order.dto';
 
@@ -15,6 +16,7 @@ import { PlaceOrderDto } from './place-order.dto';
 const placing = (failure: Error): Promise<unknown> =>
   new OrdersService(
     { $transaction: () => Promise.reject(failure) } as unknown as PrismaService,
+    {} as OrdersRepository,
     {} as PortfolioRepository,
   ).place({} as PlaceOrderDto);
 

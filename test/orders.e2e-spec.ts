@@ -69,8 +69,8 @@ describe('Orders (e2e)', () => {
         SELECT count(*)::int AS locks
         FROM pg_locks
         WHERE locktype = 'advisory' AND granted = ${granted}
-          -- The service locks on the single-bigint key: its high half lands in classid and
-          -- objsubid is 1, where the two-key form would leave the first key and a 2.
+          -- The repository locks on the single-bigint key: its high half lands in classid
+          -- and objsubid is 1, where the two-key form would leave the first key and a 2.
           AND classid = 0 AND objid::bigint = ${userId} AND objsubid = 1
       `;
       if (locks > 0) {

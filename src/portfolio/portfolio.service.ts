@@ -4,9 +4,6 @@ import { apiString, centavosFromDb } from '../money';
 import { PrismaService } from '../prisma/prisma.service';
 import { PortfolioRepository } from './portfolio.repository';
 
-const twoDecimals = (value: Prisma.Decimal | null): string | null =>
-  value === null ? null : apiString(centavosFromDb(value));
-
 export type Position = {
   instrumentId: number;
   ticker: string;
@@ -22,6 +19,9 @@ export type Portfolio = {
   availableCash: string;
   positions: Position[];
 };
+
+const twoDecimals = (value: Prisma.Decimal | null): string | null =>
+  value === null ? null : apiString(centavosFromDb(value));
 
 @Injectable()
 export class PortfolioService {
