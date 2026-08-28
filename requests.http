@@ -147,6 +147,41 @@ Content-Type: application/json
 
 { "userId": 1, "instrumentId": 9999, "side": "BUY", "type": "MARKET", "size": 10 }
 
+### 201 FILLED: a keyed placement — the key names the logical order, not the attempt
+POST {{baseUrl}}/orders
+Content-Type: application/json
+Idempotency-Key: 7f3a1c9e-buy-pamp-10
+
+{ "userId": 1, "instrumentId": 47, "side": "BUY", "type": "MARKET", "size": 10 }
+
+### 200: the same key replays that order instead of placing a second one (send the case above first)
+POST {{baseUrl}}/orders
+Content-Type: application/json
+Idempotency-Key: 7f3a1c9e-buy-pamp-10
+
+{ "userId": 1, "instrumentId": 47, "side": "BUY", "type": "MARKET", "size": 10 }
+
+### 201 REJECTED: a keyed sell the held shares cannot cover
+POST {{baseUrl}}/orders
+Content-Type: application/json
+Idempotency-Key: 2b8d05af-sell-metr-999
+
+{ "userId": 1, "instrumentId": 54, "side": "SELL", "type": "MARKET", "size": 999 }
+
+### 200: replaying a key returns the rejection it recorded, it does not decide again
+POST {{baseUrl}}/orders
+Content-Type: application/json
+Idempotency-Key: 2b8d05af-sell-metr-999
+
+{ "userId": 1, "instrumentId": 54, "side": "SELL", "type": "MARKET", "size": 999 }
+
+### 400: an Idempotency-Key outside the 1-64 characters of A-Z, a-z, 0-9, _ and -
+POST {{baseUrl}}/orders
+Content-Type: application/json
+Idempotency-Key: not a key
+
+{ "userId": 1, "instrumentId": 47, "side": "BUY", "type": "MARKET", "size": 10 }
+
 ### 200: cancelling the seeded open order returns it as CANCELLED
 PATCH {{baseUrl}}/orders/5/cancel
 

@@ -28,17 +28,20 @@ model Instrument {
 }
 
 model Order {
-  id           Int         @id @default(autoincrement())
-  instrumentId Int?        @map("instrumentid")
-  userId       Int?        @map("userid")
-  size         Int?
-  price        Decimal?    @db.Decimal(10, 2)
-  type         String?     @db.VarChar(10)
-  side         String?     @db.VarChar(10)
-  status       String?     @db.VarChar(20)
-  datetime     DateTime?   @db.Timestamp(6)
-  instrument   Instrument? @relation(fields: [instrumentId], references: [id])
-  user         User?       @relation(fields: [userId], references: [id])
+  id             Int         @id @default(autoincrement())
+  instrumentId   Int?        @map("instrumentid")
+  userId         Int?        @map("userid")
+  size           Int?
+  price          Decimal?    @db.Decimal(10, 2)
+  type           String?     @db.VarChar(10)
+  side           String?     @db.VarChar(10)
+  status         String?     @db.VarChar(20)
+  datetime       DateTime?   @db.Timestamp(6)
+  // Unique per user where it is present. The constraint is a partial index and lives in
+  // db/init.sql: a Prisma unique cannot carry the WHERE that leaves unkeyed rows alone.
+  idempotencyKey String?     @map("idempotencykey")
+  instrument     Instrument? @relation(fields: [instrumentId], references: [id])
+  user           User?       @relation(fields: [userId], references: [id])
 
   @@map("orders")
 }

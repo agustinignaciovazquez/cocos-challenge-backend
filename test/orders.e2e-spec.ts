@@ -17,6 +17,16 @@ const PAMP = 47;
 const YPFD = 50;
 const OPEN_ORDER = 5;
 
+// The one body the idempotency cases send: what they assert is which requests become an
+// order, so the order itself stays the same between them and is small enough to repeat.
+const ONE_PAMP = {
+  userId: 1,
+  instrumentId: PAMP,
+  side: 'BUY',
+  type: 'MARKET',
+  size: 1,
+};
+
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -41,6 +51,21 @@ describe('Orders (e2e)', () => {
     const response = await post(order).expect(201);
     return response.body as OrderView;
   };
+
+  const withKey = (order: object, key: string): request.Test =>
+    post(order).set('Idempotency-Key', key);
+
+  const placeWithKey = async (
+    order: object,
+    key: string,
+    status: number,
+  ): Promise<OrderView> => {
+    const response = await withKey(order, key).expect(status);
+    return response.body as OrderView;
+  };
+
+  const rowsFor = (key: string): Promise<number> =>
+    prisma.order.count({ where: { idempotencyKey: key } });
 
   const portfolio = async (userId: number): Promise<Portfolio> => {
     const response = await request(app.getHttpServer())
@@ -446,5 +471,114 @@ describe('Orders (e2e)', () => {
     expect(await availableCash(1)).toBe(
       new Prisma.Decimal(before).minus(spent).toFixed(2),
     );
+  });
+
+  it('replays a keyed placement instead of placing it again', async () => {
+    const key = 'replay-executes-nothing';
+    const placed = await placeWithKey(ONE_PAMP, key, 201);
+
+    expect(await placeWithKey(ONE_PAMP, key, 200)).toEqual(placed);
+    expect(await rowsFor(key)).toBe(1);
+    // The key identifies the request, not the order, so it is not part of the order the
+    // response reports: a keyed placement answers in exactly the shape an unkeyed one does.
+    expect(placed).not.toHaveProperty('idempotencyKey');
+  });
+
+  it('holds a key to the order it was first spent on', async () => {
+    const key = 'first-write-wins';
+    const bought = await placeWithKey(ONE_PAMP, key, 201);
+
+    // A different order under a spent key is still a replay: taking the second body would
+    // place an order the caller sent one key for, which is the duplicate this prevents.
+    const sell = { ...ONE_PAMP, instrumentId: METR, side: 'SELL', size: 5 };
+    expect(await placeWithKey(sell, key, 200)).toEqual(bought);
+    expect(await rowsFor(key)).toBe(1);
+  });
+
+  it('scopes a key to the user who spent it', async () => {
+    const key = 'one-key-two-users';
+    const mine = await placeWithKey(ONE_PAMP, key, 201);
+
+    // Keys are the caller's to invent, so two of them will collide eventually. Only the
+    // user who spent one can replay it: for anyone else it is a key that was never used.
+    const theirs = await placeWithKey({ ...ONE_PAMP, userId: 2 }, key, 201);
+
+    expect(theirs.id).not.toBe(mine.id);
+    expect(theirs.userId).toBe(2);
+    expect(await rowsFor(key)).toBe(2);
+  });
+
+  it('places one order per key', async () => {
+    const first = await placeWithKey(ONE_PAMP, 'logical-order-1', 201);
+    const second = await placeWithKey(ONE_PAMP, 'logical-order-2', 201);
+
+    expect(second.id).not.toBe(first.id);
+  });
+
+  it('keeps two placements sent without a key apart', async () => {
+    const before = await prisma.order.count();
+    const first = await place(ONE_PAMP);
+    const second = await place(ONE_PAMP);
+
+    expect(second.id).not.toBe(first.id);
+    expect(await prisma.order.count()).toBe(before + 2);
+  });
+
+  it('settles two concurrent placements sharing a key into one order', async () => {
+    const key = 'retried-before-the-answer-arrived';
+    await warmPool(1);
+
+    const [first, second] = await Promise.all([
+      withKey(ONE_PAMP, key),
+      withKey(ONE_PAMP, key),
+    ]);
+
+    // The placement lock serialises the pair, so the second one reads the row the first
+    // committed: one creation, one replay, and a single order between them.
+    expect([first.status, second.status].sort()).toEqual([200, 201]);
+    expect((first.body as OrderView).id).toBe((second.body as OrderView).id);
+    expect(await rowsFor(key)).toBe(1);
+  });
+
+  it('replays a rejected placement as the rejection it recorded', async () => {
+    const key = 'a-rejection-is-an-answer';
+    const buy = {
+      userId: 1,
+      instrumentId: YPFD,
+      side: 'BUY',
+      type: 'MARKET',
+      size: 10000,
+    };
+
+    const rejected = await placeWithKey(buy, key, 201);
+    expect(rejected).toMatchObject({ status: 'REJECTED' });
+
+    expect(await placeWithKey(buy, key, 200)).toEqual(rejected);
+    expect(await rowsFor(key)).toBe(1);
+  });
+
+  it('refuses a second row under one key at the database itself', async () => {
+    const key = 'the-index-is-the-backstop';
+    await placeWithKey(ONE_PAMP, key, 201);
+
+    // The lock is what stops the service from trying; the partial unique index is what
+    // makes the second row impossible whoever writes it.
+    await expect(prisma.$executeRaw`
+      INSERT INTO orders (instrumentid, userid, size, price, side, status, type, datetime, idempotencykey)
+      VALUES (${PAMP}, 1, 1, 925.85, 'BUY', 'FILLED', 'MARKET', '2023-07-14 10:00:00', ${key})
+    `).rejects.toThrow(/Key \(userid, idempotencykey\)/);
+
+    expect(await rowsFor(key)).toBe(1);
+  });
+
+  it('turns away a malformed Idempotency-Key, persisting nothing', async () => {
+    const before = await prisma.order.count();
+
+    await withKey(ONE_PAMP, '').expect(400);
+    await withKey(ONE_PAMP, 'k'.repeat(65)).expect(400);
+    await withKey(ONE_PAMP, 'has space').expect(400);
+    await withKey(ONE_PAMP, 'a/b').expect(400);
+
+    expect(await prisma.order.count()).toBe(before);
   });
 });

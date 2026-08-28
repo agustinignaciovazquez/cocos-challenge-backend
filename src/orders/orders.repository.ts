@@ -20,7 +20,13 @@ export type OrderRow = {
 
 export type NewOrder = Omit<OrderRow, 'id' | 'price' | 'datetime'> & {
   price: bigint;
+  idempotencyKey: string | null;
 };
+
+// The projection every statement here reads an order back through, written once so the
+// aliases that undo the schema's lowercasing cannot drift between them.
+const COLUMNS = Prisma.sql`id, instrumentid AS "instrumentId", userid AS "userId",
+                           side, size, price, type, status, datetime`;
 
 @Injectable()
 export class OrdersRepository {
@@ -60,15 +66,26 @@ export class OrdersRepository {
     db: Prisma.TransactionClient = this.prisma,
   ): Promise<OrderRow> {
     const [created] = await db.$queryRaw<OrderRow[]>`
-      INSERT INTO orders (instrumentid, userid, size, price, side, status, type, datetime)
+      INSERT INTO orders (instrumentid, userid, size, price, side, status, type, datetime, idempotencykey)
       -- Money leaves the application as its two-decimal string, and the cast is what binds
       -- that as a number: the column refuses the text a string is otherwise sent as.
       VALUES (${order.instrumentId}, ${order.userId}, ${order.size}, ${apiString(order.price)}::numeric,
-              ${order.side}, ${order.status}, ${order.type}, ${new Date()})
-      RETURNING id, instrumentid AS "instrumentId", userid AS "userId",
-                side, size, price, type, status, datetime
+              ${order.side}, ${order.status}, ${order.type}, ${new Date()}, ${order.idempotencyKey})
+      RETURNING ${COLUMNS}
     `;
     return created;
+  }
+
+  async byIdempotencyKey(
+    userId: number,
+    key: string,
+    db: Prisma.TransactionClient = this.prisma,
+  ): Promise<OrderRow | undefined> {
+    const [replayed] = await db.$queryRaw<OrderRow[]>`
+      SELECT ${COLUMNS} FROM orders
+      WHERE userid = ${userId} AND idempotencykey = ${key}
+    `;
+    return replayed;
   }
 
   async cancel(
@@ -80,8 +97,7 @@ export class OrdersRepository {
       UPDATE orders
       SET status = 'CANCELLED'
       WHERE id = ${id} AND status IN (${Prisma.join(from)})
-      RETURNING id, instrumentid AS "instrumentId", userid AS "userId",
-                side, size, price, type, status, datetime
+      RETURNING ${COLUMNS}
     `;
     return cancelled;
   }

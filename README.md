@@ -23,10 +23,15 @@ and nothing to import by hand; `--wait` holds until the healthcheck passes, so t
 server never opens a pool against a database that is still seeding.
 `docker compose down -v` throws the data away and the next `up` reseeds from
 `db/init.sql`. To run against the challenge's hosted database instead, point
-`DATABASE_URL` at it — `.env.example` carries the commented line.
+`DATABASE_URL` at it — `.env.example` carries the commented line — but that database needs
+[`db/idempotency-key.sql`](db/idempotency-key.sql) applied to it first: placement writes a
+column the provided schema does not have, and without it **every** placement fails, keyed
+or not. Applying it is the operator's call, not this service's — I did not run it against
+the shared challenge database and neither should anyone who does not own it. See
+[Base de datos](#base-de-datos).
 
 - Interactive docs: <http://localhost:3000/docs> (OpenAPI JSON at `/docs-json`)
-- Ready-to-send calls: [`requests.http`](requests.http) — 34 cases, every endpoint with
+- Ready-to-send calls: [`requests.http`](requests.http) — 39 cases, every endpoint with
   its happy and failure paths, for the VS Code REST Client extension
 
 `npm run start:prod` serves the compiled build; `PORT` overrides the port.
@@ -34,19 +39,20 @@ server never opens a pool against a database that is still seeding.
 ### Tests
 
 ```bash
-npm test         # 33 unit + 40 e2e
+npm test         # 38 unit + 49 e2e
 npm run test:unit
 npm run test:e2e # needs a running Docker daemon
 ```
 
 Unit tests cover the money conversions at their boundaries, the pure order rules — sizing,
-the accept/reject decision, the status transitions — and the HTTP status each failure of a
-placement maps to. Every DB-backed test
+the accept/reject decision, the status transitions — the alphabet an `Idempotency-Key` is
+held to, and the HTTP status each failure of a placement maps to. Every DB-backed test
 runs against a throwaway Postgres 16 that `@testcontainers/postgresql` starts and seeds
-from `db/init.sql`; no test ever touches a shared database. Five of them pin concurrency:
+from `db/init.sql`; no test ever touches a shared database. Six of them pin concurrency:
 simultaneous buys against one balance,
 simultaneous sells against one position, simultaneous cancels of one order, a placement
-blocked behind a held advisory lock, and a cancel settling beside a placement.
+blocked behind a held advisory lock, a cancel settling beside a placement, and a retried
+placement arriving beside the one it repeats.
 
 `npm run lint` runs Prettier in check mode and then ESLint. CI
 ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `npm ci`, lint, build and the
@@ -129,6 +135,11 @@ rather than hidden](#the-seeds-10-bma-position-is-reported-honestly).
 }
 ```
 
+`POST /orders` also takes an optional `Idempotency-Key` header. Send the same key again and
+the same order comes back with a **200** instead of a 201, having executed nothing a second
+time — [what it is for, and what it costs to leave
+out](#an-idempotency-key-turns-a-retried-placement-into-one-order).
+
 ---
 
 ## Decisiones y supuestos
@@ -187,7 +198,8 @@ which it was not.
 user, instrument or order, **409** an order whose status forbids the transition. And one
 5xx is not a bug: **503** when the placement transaction runs out of its budget waiting for
 its turn behind the [advisory lock](#concurrency-one-advisory-lock-for-placement-a-conditional-update-for-cancellation)
-— the server is busy, and the same request is worth sending again.
+— the server is busy, and the same request is worth sending again, safely so when it
+carries an [`Idempotency-Key`](#an-idempotency-key-turns-a-retried-placement-into-one-order).
 
 ### Concurrency: one advisory lock for placement, a conditional UPDATE for cancellation
 
@@ -222,6 +234,59 @@ so of two concurrent cancels only one matches a row and the other reads back the
 status to answer 409. Placement only ever INSERTs, so it cannot race with a cancel, and
 cancelling moves no cash because a `NEW` order reserved none — the day reservation lands,
 cancel becomes balance-mutating and has to take the same lock.
+
+### An `Idempotency-Key` turns a retried placement into one order
+
+A chaos run against this API — one response in five dropped, and a client that retried
+every one of them — turned 43 logical orders into 86 rows in 65 seconds. 28 of those pairs
+filled on **both** legs: **ARS 34,395.65** of notional executed twice, money that moved
+only because a retry was indistinguishable from a second order. The damage was bounded by
+nothing but the balance; one retry was refused by ARS 2.10, and a richer account would have
+been _less_ protected, not more. Nothing else in that run broke — the advisory lock
+serialised every placement, the rules never once disagreed with an independent centavo
+fold, and atomicity across an 8-second database freeze was exact — so this is the one
+defect that needed a code change, and the only reason I touched the schema at all.
+
+`POST /orders` now accepts an optional `Idempotency-Key` header: 1–64 characters of
+`[A-Za-z0-9_-]`, anything else a 400. It names the _logical_ order rather than the attempt,
+so a client generates it once and resends it verbatim on every retry — a key regenerated
+per HTTP attempt buys nothing. The first request carrying a key places the order and
+answers 201; every later one answers **200** with the stored row and executes nothing: same
+id, same status, same price. A `REJECTED` row replays as the rejection it recorded rather
+than being decided a second time — the balance may have moved since, and a retry is not a
+new opinion. Sent without a key, a placement behaves exactly as it did before.
+
+That is also what makes the **503** honest. A placement shed while waiting its turn is
+advertised as worth sending again; with a key, "again" is safe, because whether the shed
+request reached the database or not the key settles the pair into one order. That same
+advice, followed without a key, is what turns a lost answer into the 43 duplicates above.
+
+The lookup runs inside the placement transaction, immediately after the advisory lock and
+before anything is decided. That is what makes it race-free: a user's placements are
+already serialised, so between a key missing and that key being written no other placement
+of that user's can run. Two simultaneous requests sharing a key therefore produce one 201,
+one 200, one row — which the e2e suite asserts. The unique index behind the column is the
+backstop rather than the mechanism, and its `23505` is deliberately left uncaught: reaching
+one would mean the lock had stopped serialising, and a 500 says that where a silent re-read
+would hide it.
+
+The schema change is `orders.idempotencyKey TEXT` plus
+`CREATE UNIQUE INDEX … ON orders (userId, idempotencyKey) WHERE idempotencyKey IS NOT NULL`,
+both in [`db/init.sql`](db/init.sql) for a database built from it and in
+[`db/idempotency-key.sql`](db/idempotency-key.sql) for one that already exists. Partial, so
+every row that carries no key — all 11 seeded ones, and every request that sends none — is
+untouched. It lives with the table
+rather than in `db/indexes.sql` because it is not a suggestion: the other two indexes make
+queries faster, this one is where the guarantee is enforced, so every database this service
+runs against has to have it. The Prisma model maps the column and nothing more — a Prisma
+`@@unique` cannot carry the `WHERE` that keeps unkeyed rows out of it.
+
+One case is settled rather than solved: a key that comes back with a _different_ order gets
+the stored row anyway. The production answer is **409** — compare a fingerprint of the
+request against one stored beside the key, and tell a client that reused a key by mistake
+that it did. I left it out because it is a second contract to specify and store for a
+mistake this API cannot currently distinguish from a proxy rewriting a body, and returning
+the first order is the safer of the two wrong answers: it never executes anything.
 
 ### The seed's −10 BMA position is reported honestly
 
@@ -345,10 +410,10 @@ neither.
 
 ## Base de datos
 
-`db/init.sql` is the challenge's `database.sql` verbatim: compose mounts it into
-`/docker-entrypoint-initdb.d/`, and the test containers copy it in the same way, so local
-runs and CI see byte-identical data (4 users, 66 instruments, 11 orders, 126 market-data
-rows).
+`db/init.sql` is the challenge's `database.sql` plus the one schema change below: compose
+mounts it into `/docker-entrypoint-initdb.d/`, and the test containers copy it in the same
+way, so local runs and CI see byte-identical data (4 users, 66 instruments, 11 orders, 126
+market-data rows).
 
 Two things about the provided schema are worth flagging:
 
@@ -360,11 +425,29 @@ Two things about the provided schema are worth flagging:
   column for that table; the shipped `database.sql` — and the hosted database — have
   `date`. I followed the database.
 
-I did not modify the schema. `db/indexes.sql` holds the two indexes the queries in this
-service would want — `orders(userid, instrumentid)` and
-`marketdata(instrumentid, date DESC)`, each with its justification — but they are **not**
-applied automatically, and they must be applied to a local database only, never to the
+The one change to the schema is `orders.idempotencyKey` and the partial unique index over
+it, [justified by what its absence
+cost](#an-idempotency-key-turns-a-retried-placement-into-one-order). Nothing else moved:
+no column was renamed, retyped or dropped, and every existing row and query reads as it
+did.
+
+A database built from `db/init.sql` — compose, the test containers, CI — has it already.
+A database that already exists needs it applied, or every placement fails on the missing
+column, and [`db/idempotency-key.sql`](db/idempotency-key.sql) is that one file: an
+`ADD COLUMN IF NOT EXISTS` and the same index `IF NOT EXISTS`, so applying it twice is a
+no-op the second time. It is required rather than suggested, but it is still DDL, so the
+rule that governs `db/indexes.sql` below governs it too — a database you own, never the
 shared challenge database:
+
+```bash
+docker compose exec -T db psql -U postgres -d cocos -f /dev/stdin < db/idempotency-key.sql
+```
+
+`db/indexes.sql` is separate, and holds the two indexes the queries in this service would
+want — `orders(userid, instrumentid)` and `marketdata(instrumentid, date DESC)`, each with
+its justification. Those are performance suggestions rather than guarantees, so they are
+**not** applied automatically, and they must be applied to a local database only, never to
+the shared challenge database:
 
 ```bash
 docker compose exec -T db psql -U postgres -d cocos -f /dev/stdin < db/indexes.sql
@@ -389,6 +472,11 @@ runtime dependencies of its own, so nothing on the served path is affected. (`np
 Deliberate, and worth naming rather than leaving to be found:
 
 - **No reservation of funds for `NEW` orders** — see the first decision above.
+- **The [`Idempotency-Key`](#an-idempotency-key-turns-a-retried-placement-into-one-order) is
+  optional**, so a caller that sends none can still place one order twice. Requiring it
+  would be the stronger contract and is a one-line change; it is left optional because the
+  endpoint the challenge specifies takes a body and nothing else, and a header no existing
+  caller sends should not start turning their orders away.
 - **No pagination on the search.** It returns the 20 best matches and stops.
 - **No authentication**, which the challenge puts out of scope: `userId` is trusted input.
 
@@ -396,7 +484,9 @@ Deliberate, and worth naming rather than leaving to be found:
 
 1. **Reserve funds and shares** when an order is accepted, releasing them on fill or cancel
    — the one behaviour that separates this from a real order book.
-2. **Idempotency keys on `POST /orders`**, so a client that retries after a timeout cannot
-   place the same order twice.
+2. **409 when an `Idempotency-Key` comes back with a different order** — fingerprint the
+   request beside the key, so a client that reused one by mistake is told, instead of
+   [handed the order the key already stands
+   for](#an-idempotency-key-turns-a-retried-placement-into-one-order).
 3. **Pagination and a `pg_trgm` GIN index** for the search, which today scans every
    instrument for the substring and caps the answer at 20 rows.

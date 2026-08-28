@@ -22,9 +22,17 @@ CREATE TABLE orders (
   side VARCHAR(10),
   status VARCHAR(20),
   datetime TIMESTAMP,
+  idempotencyKey TEXT,
   FOREIGN KEY (instrumentId) REFERENCES instruments(id),
   FOREIGN KEY (userId) REFERENCES users(id)
 );
+
+-- The only addition to the challenge's schema, and the whole of it: one row per user and
+-- key, so a retried placement cannot become a second order. Partial, so the rows that
+-- carry no key — every historical one, and every request that sends none — are untouched.
+CREATE UNIQUE INDEX orders_userid_idempotencykey_key
+  ON orders (userId, idempotencyKey)
+  WHERE idempotencyKey IS NOT NULL;
 
 CREATE TABLE marketdata (
   id SERIAL PRIMARY KEY,

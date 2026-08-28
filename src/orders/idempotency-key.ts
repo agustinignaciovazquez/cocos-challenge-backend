@@ -1,0 +1,18 @@
+import { BadRequestException } from '@nestjs/common';
+
+// Anchored with a lookahead rather than `$`, which in JavaScript matches before a trailing
+// newline too — the one character a header value must never carry through.
+const KEY = /^[A-Za-z0-9_-]{1,64}(?![\s\S])/;
+
+// A function rather than a pipe because `@Headers()` is the one param decorator Nest does
+// not run pipes for. The alphabet is deliberately narrow: the key is opaque to this
+// service, so refusing whitespace, newlines and anything past 64 characters costs a caller
+// nothing and gives the column a bound the schema does not.
+export function idempotencyKey(sent: string | undefined): string | undefined {
+  if (sent !== undefined && !KEY.test(sent)) {
+    throw new BadRequestException(
+      'Idempotency-Key must be 1 to 64 characters of A-Z, a-z, 0-9, _ or -',
+    );
+  }
+  return sent;
+}

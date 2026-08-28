@@ -24,12 +24,22 @@ export type OrderView = Omit<OrderRow, 'price' | 'datetime'> & {
   datetime: string;
 };
 
+// `replayed` is the status the controller answers with, not part of the order: a replay
+// hands back the row a previous request created, so it is a 200 rather than a 201.
+export type Placed = { order: OrderView; replayed: boolean };
+
 const CANCELLABLE = ORDER_STATUSES.filter((status) =>
   canTransition(status, 'CANCELLED'),
 );
 
 const centavos = (value?: number): bigint | undefined =>
   value === undefined ? undefined : centavosFromApi(value);
+
+const view = (order: OrderRow): OrderView => ({
+  ...order,
+  price: apiString(centavosFromDb(order.price)),
+  datetime: order.datetime.toISOString(),
+});
 
 @Injectable()
 export class OrdersService {
@@ -41,10 +51,10 @@ export class OrdersService {
     private readonly portfolio: PortfolioRepository,
   ) {}
 
-  async place(order: PlaceOrderDto): Promise<OrderView> {
+  async place(order: PlaceOrderDto, key?: string): Promise<Placed> {
     try {
       return await this.prisma.$transaction(
-        (tx) => this.placeWithin(order, tx),
+        (tx) => this.placeWithin(order, key, tx),
         {
           isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
           // Both bound queueing, not work: the placement is half a dozen indexed
@@ -89,21 +99,32 @@ export class OrdersService {
       );
     }
 
-    return {
-      ...cancelled,
-      price: apiString(centavosFromDb(cancelled.price)),
-      datetime: cancelled.datetime.toISOString(),
-    };
+    return view(cancelled);
   }
 
   private async placeWithin(
     order: PlaceOrderDto,
+    key: string | undefined,
     tx: Prisma.TransactionClient,
-  ): Promise<OrderView> {
+  ): Promise<Placed> {
     // Serialises a user's placements so two cannot both spend the same balance — which
     // holds only under READ COMMITTED, where the balance is read after the wait: a
     // repeatable-read snapshot predates the wait and would still show it unspent.
     await this.repository.lockPlacements(order.userId, tx);
+
+    // Under that lock a user's placements cannot interleave, so a key that misses here is
+    // still free at the insert below. The unique index behind it is the backstop, and its
+    // violation is left uncaught on purpose: reaching one would mean the lock had stopped
+    // serialising, which is a 500 rather than something to paper over. A hit returns the
+    // stored row whatever it says and whatever this request asked for — a replay reports
+    // the first decision instead of making a second one.
+    const replayed =
+      key === undefined
+        ? undefined
+        : await this.repository.byIdempotencyKey(order.userId, key, tx);
+    if (replayed !== undefined) {
+      return { order: view(replayed), replayed: true };
+    }
 
     if (!(await this.portfolio.userExists(order.userId, tx))) {
       throw new NotFoundException(`User ${order.userId} not found`);
@@ -142,15 +163,12 @@ export class OrdersService {
         price,
         type: order.type,
         status,
+        idempotencyKey: key ?? null,
       },
       tx,
     );
 
-    return {
-      ...created,
-      price: apiString(centavosFromDb(created.price)),
-      datetime: created.datetime.toISOString(),
-    };
+    return { order: view(created), replayed: false };
   }
 
   private async tradableClose(
