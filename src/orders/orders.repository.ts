@@ -23,6 +23,12 @@ export type NewOrder = Omit<OrderRow, 'id' | 'price' | 'datetime'> & {
   idempotencyKey: string | null;
 };
 
+// The class half of the placement lock's key. Postgres keeps every advisory lock in one
+// global space, so a bare `userId` is a number anyone can take — a component locking on
+// 7 for reasons of its own would block user 7's placements. The value is the ASCII of
+// 'ORDR', distinctive enough that a collision would have to be deliberate.
+export const PLACEMENTS_LOCK = 0x4f524452;
+
 // The projection every statement here reads an order back through, written once so the
 // aliases that undo the schema's lowercasing cannot drift between them.
 const COLUMNS = Prisma.sql`id, instrumentid AS "instrumentId", userid AS "userId",
@@ -33,12 +39,16 @@ export class OrdersRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   // No client default, unlike its siblings: an advisory lock taken outside a transaction
-  // is released with the statement that takes it, and serialises nothing.
+  // is released with the statement that takes it, and serialises nothing. The casts are
+  // what reach the two-key overload: a bound number arrives as a bigint, and the form
+  // that takes a class alongside the key is the one declared for a pair of int4s.
   async lockPlacements(
     userId: number,
     tx: Prisma.TransactionClient,
   ): Promise<void> {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${userId})`;
+    await tx.$executeRaw`
+      SELECT pg_advisory_xact_lock(${PLACEMENTS_LOCK}::int, ${userId}::int)
+    `;
   }
 
   async quote(

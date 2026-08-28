@@ -205,11 +205,13 @@ carries an [`Idempotency-Key`](#an-idempotency-key-turns-a-retried-placement-int
 
 Placement reads a balance and then writes an order that depends on it, so the two must not
 interleave. The whole placement runs in one transaction that opens with
-`SELECT pg_advisory_xact_lock(userId)`: a user's orders are serialised against each other,
-different users never contend, and the lock is released with the transaction — there is
-nothing to clean up if the request dies. Two simultaneous buys against the same balance —
-or two sells against the same position — therefore produce one `FILLED` and one
-`REJECTED`, which is what the e2e suite asserts.
+`SELECT pg_advisory_xact_lock(PLACEMENTS_LOCK, userId)`: a user's orders are serialised
+against each other, different users never contend, and the lock is released with the
+transaction — there is nothing to clean up if the request dies. The first argument is a
+class of this application's own, because Postgres keeps every advisory lock in one global
+space and a bare `userId` is a number any other component can take. Two simultaneous buys
+against the same balance — or two sells against the same position — therefore produce one
+`FILLED` and one `REJECTED`, which is what the e2e suite asserts.
 
 The transaction is pinned to `READ COMMITTED`, which is what makes the lock mean anything:
 the balance has to be read after the wait, and a repeatable-read snapshot would predate it

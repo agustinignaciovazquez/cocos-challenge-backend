@@ -6,6 +6,7 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/configure-app';
+import { PLACEMENTS_LOCK } from '../src/orders/orders.repository';
 import { OrderView } from '../src/orders/orders.service';
 import { Portfolio } from '../src/portfolio/portfolio.service';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -94,9 +95,11 @@ describe('Orders (e2e)', () => {
         SELECT count(*)::int AS locks
         FROM pg_locks
         WHERE locktype = 'advisory' AND granted = ${granted}
-          -- The repository locks on the single-bigint key: its high half lands in classid
-          -- and objsubid is 1, where the two-key form would leave the first key and a 2.
-          AND classid = 0 AND objid::bigint = ${userId} AND objsubid = 1
+          -- The repository locks on the two-key form: the class lands in classid, the user
+          -- in objid and objsubid is 2, where a single-bigint key would put its own high
+          -- half in classid and leave a 1 — so a lock that lost its class matches nothing.
+          AND classid::bigint = ${PLACEMENTS_LOCK} AND objid::bigint = ${userId}
+          AND objsubid = 2
       `;
       if (locks > 0) {
         return;
@@ -409,7 +412,7 @@ describe('Orders (e2e)', () => {
     // balance after the wait, which is exactly what READ COMMITTED guarantees.
     const holding = outsider.$transaction(
       async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(4)`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${PLACEMENTS_LOCK}::int, 4)`;
         await tx.$executeRaw`
           INSERT INTO orders (instrumentid, userid, size, price, side, status, type, datetime)
           VALUES (${ARS}, 4, 5000, 1, 'CASH_OUT', 'FILLED', 'MARKET', '2023-07-14 10:01:00')
