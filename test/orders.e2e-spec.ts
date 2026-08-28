@@ -34,6 +34,11 @@ const sleep = (ms: number): Promise<void> =>
 const diagnosis = (response: request.Response): string =>
   (response.body as { message: string[] }).message[0];
 
+// The two 400s are read apart because they arrive in different shapes: the DTO's is the
+// array of every rule the body broke, the header's is the one string the handler threw.
+const refusal = (response: request.Response): string =>
+  (response.body as { message: string }).message;
+
 const LOCK_POLL_MS = 50;
 // Well under half the placement transaction's 10s timeout, so a lock that never appears
 // fails this poll instead of coming back as the 503 that timeout maps to.
@@ -45,8 +50,16 @@ describe('Orders (e2e)', () => {
   let prisma: PrismaService;
   let outsider: PrismaClient;
 
-  const post = (order: object): request.Test =>
+  const unkeyed = (order: object): request.Test =>
     request(app.getHttpServer()).post('/orders').send(order);
+
+  // Every placement below is a logical order of its own, so each carries a key of its own:
+  // one key shared between two of them would replay the first instead of placing the
+  // second. The cases about replaying name the key they share; this counter answers for
+  // the rest, and `unkeyed` is left to the one case that pins a missing header.
+  let placements = 0;
+  const post = (order: object): request.Test =>
+    unkeyed(order).set('Idempotency-Key', `case-${++placements}`);
 
   const place = async (order: object): Promise<OrderView> => {
     const response = await post(order).expect(201);
@@ -54,7 +67,7 @@ describe('Orders (e2e)', () => {
   };
 
   const withKey = (order: object, key: string): request.Test =>
-    post(order).set('Idempotency-Key', key);
+    unkeyed(order).set('Idempotency-Key', key);
 
   const placeWithKey = async (
     order: object,
@@ -476,14 +489,15 @@ describe('Orders (e2e)', () => {
     );
   });
 
-  it('replays a keyed placement instead of placing it again', async () => {
+  it('replays a repeated placement instead of placing it again', async () => {
     const key = 'replay-executes-nothing';
     const placed = await placeWithKey(ONE_PAMP, key, 201);
 
     expect(await placeWithKey(ONE_PAMP, key, 200)).toEqual(placed);
     expect(await rowsFor(key)).toBe(1);
-    // The key identifies the request, not the order, so it is not part of the order the
-    // response reports: a keyed placement answers in exactly the shape an unkeyed one does.
+    // The key identifies the request, not the order, so it is no part of the order the
+    // response reports: the body says what the market decided and nothing about the name
+    // the request was sent under.
     expect(placed).not.toHaveProperty('idempotencyKey');
   });
 
@@ -518,13 +532,17 @@ describe('Orders (e2e)', () => {
     expect(second.id).not.toBe(first.id);
   });
 
-  it('keeps two placements sent without a key apart', async () => {
+  it('turns away a placement sent with no key, persisting nothing', async () => {
     const before = await prisma.order.count();
-    const first = await place(ONE_PAMP);
-    const second = await place(ONE_PAMP);
 
-    expect(second.id).not.toBe(first.id);
-    expect(await prisma.order.count()).toBe(before + 2);
+    // The header is the contract, not an option the caller may decline: an order this
+    // service cannot name is one a retry of it cannot be told apart from.
+    const refused = await unkeyed(ONE_PAMP).expect(400);
+
+    // Half of a pair: the malformed case below pins the other message, so collapsing the
+    // two into one answer fails here rather than passing quietly.
+    expect(refusal(refused)).toMatch(/^Idempotency-Key is required/);
+    expect(await prisma.order.count()).toBe(before);
   });
 
   it('settles two concurrent placements sharing a key into one order', async () => {
@@ -579,9 +597,12 @@ describe('Orders (e2e)', () => {
 
     await withKey(ONE_PAMP, '').expect(400);
     await withKey(ONE_PAMP, 'k'.repeat(65)).expect(400);
-    await withKey(ONE_PAMP, 'has space').expect(400);
+    const spaced = await withKey(ONE_PAMP, 'has space').expect(400);
     await withKey(ONE_PAMP, 'a/b').expect(400);
 
+    // The other half of that pair: a key that is present and wrong is answered by the
+    // alphabet it broke, not by being asked for a key it already sent.
+    expect(refusal(spaced)).toMatch(/^Idempotency-Key must be/);
     expect(await prisma.order.count()).toBe(before);
   });
 });

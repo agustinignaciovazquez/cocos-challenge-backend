@@ -51,7 +51,7 @@ export class OrdersService {
     private readonly portfolio: PortfolioRepository,
   ) {}
 
-  async place(order: PlaceOrderDto, key?: string): Promise<Placed> {
+  async place(order: PlaceOrderDto, key: string): Promise<Placed> {
     try {
       return await this.prisma.$transaction(
         (tx) => this.placeWithin(order, key, tx),
@@ -104,7 +104,7 @@ export class OrdersService {
 
   private async placeWithin(
     order: PlaceOrderDto,
-    key: string | undefined,
+    key: string,
     tx: Prisma.TransactionClient,
   ): Promise<Placed> {
     // Serialises a user's placements so two cannot both spend the same balance — which
@@ -118,10 +118,11 @@ export class OrdersService {
     // serialising, which is a 500 rather than something to paper over. A hit returns the
     // stored row whatever it says and whatever this request asked for — a replay reports
     // the first decision instead of making a second one.
-    const replayed =
-      key === undefined
-        ? undefined
-        : await this.repository.byIdempotencyKey(order.userId, key, tx);
+    const replayed = await this.repository.byIdempotencyKey(
+      order.userId,
+      key,
+      tx,
+    );
     if (replayed !== undefined) {
       return { order: view(replayed), replayed: true };
     }
@@ -163,7 +164,7 @@ export class OrdersService {
         price,
         type: order.type,
         status,
-        idempotencyKey: key ?? null,
+        idempotencyKey: key,
       },
       tx,
     );

@@ -22,17 +22,17 @@ export class OrdersController {
 
   @ApiHeader({
     name: 'Idempotency-Key',
-    required: false,
+    required: true,
     description:
-      'Optional, 1-64 characters of A-Z, a-z, 0-9, _ or -. Names the logical order rather ' +
+      'Required, 1-64 characters of A-Z, a-z, 0-9, _ or -. Names the logical order rather ' +
       'than the attempt, so it is generated once and reused verbatim on every retry of it.',
   })
   @ApiResponse({ status: 201, description: 'The order this request created.' })
   @ApiResponse({
     status: 400,
     description:
-      'The order is malformed, or the Idempotency-Key is not 1-64 characters of A-Z, ' +
-      'a-z, 0-9, _ or -.',
+      'The order is malformed, or the Idempotency-Key is missing, or it is not 1-64 ' +
+      'characters of A-Z, a-z, 0-9, _ or -.',
   })
   @ApiResponse({
     status: 200,

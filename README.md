@@ -25,13 +25,13 @@ server never opens a pool against a database that is still seeding.
 `db/init.sql`. To run against the challenge's hosted database instead, point
 `DATABASE_URL` at it — `.env.example` carries the commented line — but that database needs
 [`db/idempotency-key.sql`](db/idempotency-key.sql) applied to it first: placement writes a
-column the provided schema does not have, and without it **every** placement fails, keyed
-or not. Applying it is the operator's call, not this service's — I did not run it against
+column the provided schema does not have, and without it **every** placement fails.
+Applying it is the operator's call, not this service's — I did not run it against
 the shared challenge database and neither should anyone who does not own it. See
 [Base de datos](#base-de-datos).
 
 - Interactive docs: <http://localhost:3000/docs> (OpenAPI JSON at `/docs-json`)
-- Ready-to-send calls: [`requests.http`](requests.http) — 39 cases, every endpoint with
+- Ready-to-send calls: [`requests.http`](requests.http) — 40 cases, every endpoint with
   its happy and failure paths, for the VS Code REST Client extension
 
 `npm run start:prod` serves the compiled build; `PORT` overrides the port.
@@ -45,11 +45,11 @@ npm run test:e2e # needs a running Docker daemon
 ```
 
 Unit tests cover the money conversions at their boundaries, the pure order rules — sizing,
-the accept/reject decision, the status transitions — the alphabet an `Idempotency-Key` is
-held to, and the HTTP status each failure of a placement maps to. Every DB-backed test
-runs against a throwaway Postgres 16 that `@testcontainers/postgresql` starts and seeds
-from `db/init.sql`; no test ever touches a shared database. Six of them pin concurrency:
-simultaneous buys against one balance,
+the accept/reject decision, the status transitions — the `Idempotency-Key` every placement
+has to carry and the alphabet it is held to, and the HTTP status each failure of a
+placement maps to. Every DB-backed test runs against a throwaway Postgres 16 that
+`@testcontainers/postgresql` starts and seeds from `db/init.sql`; no test ever touches a
+shared database. Six of them pin concurrency: simultaneous buys against one balance,
 simultaneous sells against one position, simultaneous cancels of one order, a placement
 blocked behind a held advisory lock, a cancel settling beside a placement, and a retried
 placement arriving beside the one it repeats.
@@ -135,10 +135,11 @@ rather than hidden](#the-seeds-10-bma-position-is-reported-honestly).
 }
 ```
 
-`POST /orders` also takes an optional `Idempotency-Key` header. Send the same key again and
-the same order comes back with a **200** instead of a 201, having executed nothing a second
-time — [what it is for, and what it costs to leave
-out](#an-idempotency-key-turns-a-retried-placement-into-one-order).
+`POST /orders` requires an `Idempotency-Key` header — 1–64 characters of `[A-Za-z0-9_-]`,
+naming the logical order rather than the attempt. Send the same key again and the same
+order comes back with a **200** instead of a 201, having executed nothing a second time; a
+placement that sends no key is a **400**, having placed nothing — [why it is required
+rather than offered](#an-idempotency-key-turns-a-retried-placement-into-one-order).
 
 ---
 
@@ -198,7 +199,7 @@ which it was not.
 user, instrument or order, **409** an order whose status forbids the transition. And one
 5xx is not a bug: **503** when the placement transaction runs out of its budget waiting for
 its turn behind the [advisory lock](#concurrency-one-advisory-lock-for-placement-a-conditional-update-for-cancellation)
-— the server is busy, and the same request is worth sending again, safely so when it
+— the server is busy, and the same request is worth sending again, safely so because it
 carries an [`Idempotency-Key`](#an-idempotency-key-turns-a-retried-placement-into-one-order).
 
 ### Concurrency: one advisory lock for placement, a conditional UPDATE for cancellation
@@ -249,14 +250,26 @@ serialised every placement, the rules never once disagreed with an independent c
 fold, and atomicity across an 8-second database freeze was exact — so this is the one
 defect that needed a code change, and the only reason I touched the schema at all.
 
-`POST /orders` now accepts an optional `Idempotency-Key` header: 1–64 characters of
+`POST /orders` now requires an `Idempotency-Key` header: 1–64 characters of
 `[A-Za-z0-9_-]`, anything else a 400. It names the _logical_ order rather than the attempt,
 so a client generates it once and resends it verbatim on every retry — a key regenerated
 per HTTP attempt buys nothing. The first request carrying a key places the order and
 answers 201; every later one answers **200** with the stored row and executes nothing: same
 id, same status, same price. A `REJECTED` row replays as the rejection it recorded rather
 than being decided a second time — the balance may have moved since, and a retry is not a
-new opinion. Sent without a key, a placement behaves exactly as it did before.
+new opinion.
+
+**Required, not offered** — the one deliberate break in this API's contract. A safety the
+caller may decline is not a guarantee the service makes: it hands back the very
+responsibility it was meant to take, and the client that skips the header is precisely the
+client whose retry places the order twice. The 43 above sent no key, because there was none
+to send; an optional header would have left that same client free to keep sending none, and
+left this endpoint unable to say what it does under retry — only what it does for callers
+who opted in. So a placement that does not name itself is refused at the door: **400**, and
+nothing persisted. The two mistakes get their own message, since they are the caller's to
+tell apart — no key at all, or a key outside the alphabet. What it costs a caller is one
+identifier per logical order; what leaving it optional costs is the number this section
+opens with.
 
 That is also what makes the **503** honest. A placement shed while waiting its turn is
 advertised as worth sending again; with a key, "again" is safe, because whether the shed
@@ -276,12 +289,12 @@ The schema change is `orders.idempotencyKey TEXT` plus
 `CREATE UNIQUE INDEX … ON orders (userId, idempotencyKey) WHERE idempotencyKey IS NOT NULL`,
 both in [`db/init.sql`](db/init.sql) for a database built from it and in
 [`db/idempotency-key.sql`](db/idempotency-key.sql) for one that already exists. Partial, so
-every row that carries no key — all 11 seeded ones, and every request that sends none — is
-untouched. It lives with the table
-rather than in `db/indexes.sql` because it is not a suggestion: the other two indexes make
-queries faster, this one is where the guarantee is enforced, so every database this service
-runs against has to have it. The Prisma model maps the column and nothing more — a Prisma
-`@@unique` cannot carry the `WHERE` that keeps unkeyed rows out of it.
+every row that carries no key — the 11 the seed brings, written before there was a header
+to send — is untouched, and the column stays nullable for exactly those. It lives with the
+table rather than in `db/indexes.sql` because it is not a suggestion: the other two indexes
+make queries faster, this one is where the guarantee is enforced, so every database this
+service runs against has to have it. The Prisma model maps the column and nothing more — a
+Prisma `@@unique` cannot carry the `WHERE` that keeps unkeyed rows out of it.
 
 One case is settled rather than solved: a key that comes back with a _different_ order gets
 the stored row anyway. The production answer is **409** — compare a fingerprint of the
@@ -474,11 +487,11 @@ runtime dependencies of its own, so nothing on the served path is affected. (`np
 Deliberate, and worth naming rather than leaving to be found:
 
 - **No reservation of funds for `NEW` orders** — see the first decision above.
-- **The [`Idempotency-Key`](#an-idempotency-key-turns-a-retried-placement-into-one-order) is
-  optional**, so a caller that sends none can still place one order twice. Requiring it
-  would be the stronger contract and is a one-line change; it is left optional because the
-  endpoint the challenge specifies takes a body and nothing else, and a header no existing
-  caller sends should not start turning their orders away.
+- **`POST /orders` takes a header the challenge's endpoint does not specify**, and refuses
+  a request without it — deliberate, and [argued
+  above](#an-idempotency-key-turns-a-retried-placement-into-one-order): the guarantee is
+  worth more than the extra field, and a client that cannot be told apart from its own
+  retry is the one case here that costs money.
 - **No pagination on the search.** It returns the 20 best matches and stops.
 - **No authentication**, which the challenge puts out of scope: `userId` is trusted input.
 

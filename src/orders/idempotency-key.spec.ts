@@ -2,8 +2,13 @@ import { BadRequestException } from '@nestjs/common';
 import { idempotencyKey } from './idempotency-key';
 
 describe('idempotencyKey', () => {
-  it('lets a request with no key through', () => {
-    expect(idempotencyKey(undefined)).toBeUndefined();
+  it('refuses a request that sends no key', () => {
+    expect(() => idempotencyKey(undefined)).toThrow(BadRequestException);
+    // A message of its own: a caller that sent nothing is told to send a key, not told
+    // that the key it sent was the wrong shape.
+    expect(() => idempotencyKey(undefined)).toThrow(
+      /^Idempotency-Key is required/,
+    );
   });
 
   it('takes letters, digits, underscores and hyphens, up to 64 of them', () => {

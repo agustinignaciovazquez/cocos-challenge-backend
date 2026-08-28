@@ -20,7 +20,9 @@ export type OrderRow = {
 
 export type NewOrder = Omit<OrderRow, 'id' | 'price' | 'datetime'> & {
   price: bigint;
-  idempotencyKey: string | null;
+  // Not `string | null`, though the column is: the rows that carry no key are the seeded
+  // ones, written before the header was asked for, and placement cannot add another.
+  idempotencyKey: string;
 };
 
 // The class half of the placement lock's key. Postgres keeps every advisory lock in one

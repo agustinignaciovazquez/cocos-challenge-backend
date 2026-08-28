@@ -18,7 +18,7 @@ const placing = (failure: Error): Promise<unknown> =>
     { $transaction: () => Promise.reject(failure) } as unknown as PrismaService,
     {} as OrdersRepository,
     {} as PortfolioRepository,
-  ).place({} as PlaceOrderDto);
+  ).place({} as PlaceOrderDto, 'the-transaction-never-runs');
 
 const prismaError = (code: string): Prisma.PrismaClientKnownRequestError =>
   new Prisma.PrismaClientKnownRequestError(code, {
