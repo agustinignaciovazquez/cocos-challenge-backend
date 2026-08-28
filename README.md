@@ -174,7 +174,7 @@ return; the daily one is a one-line addition to the same query if it is wanted.
 ### MARKET executes at the latest close; LIMIT parks at its price
 
 There is no market to simulate, so a MARKET order fills immediately at the `close` of the
-most recent `marketdata` row for that instrument (`ORDER BY date DESC LIMIT 1`; the seed
+most recent `marketdata` row for that instrument (the `latest_closes` view; the seed
 carries two days of prices for every instrument that has any, so the ordering matters). Two
 seeded equities carry no prices at all: an order for either is a 400 rather than a fill at
 an invented price.
@@ -292,11 +292,11 @@ New orders cannot deepen it — a sell beyond the held shares is `REJECTED`.
 
 ### A position in an instrument with no market data is valued at 0
 
-`marketValue` is `ROUND(quantity × COALESCE(latest.close, 0), 2)`, so a holding of an
-instrument with no `marketdata` row — PGR and IRCP in the seed — is listed with its
-quantity and the cost basis its buys give it, a `marketValue` of `0.00` and a `null` total
-return, contributing nothing to `totalValue`. Nothing this service does can create such a
-holding: the missing price is the same one that turns an order for either into
+`marketValue` is `ROUND(quantity × COALESCE(c.close, 0), 2)` over `latest_closes`, so a
+holding of an instrument with no `marketdata` row — PGR and IRCP in the seed — is listed
+with its quantity and the cost basis its buys give it, a `marketValue` of `0.00` and a
+`null` total return, contributing nothing to `totalValue`. Nothing this service does can
+create such a holding: the missing price is the same one that turns an order for either into
 [a 400](#market-executes-at-the-latest-close-limit-parks-at-its-price), so the case only
 arrives with data loaded from outside the API.
 
@@ -397,10 +397,10 @@ mid-request cannot land in both halves of `totalValue`, or in neither.
 
 ## Base de datos
 
-`db/init.sql` is the challenge's `database.sql` plus the one schema change below: compose
-mounts it into `/docker-entrypoint-initdb.d/`, and the test containers copy it the same
-way, so local runs and CI see byte-identical data (4 users, 66 instruments, 11 orders, 126
-market-data rows).
+`db/init.sql` is the challenge's `database.sql` plus the column, views and indexes below:
+compose mounts it into `/docker-entrypoint-initdb.d/`, and the test containers copy it the
+same way, so local runs and CI see byte-identical data (4 users, 66 instruments, 11 orders,
+126 market-data rows).
 
 Two notes on the provided schema:
 
@@ -412,31 +412,43 @@ Two notes on the provided schema:
   column for that table; the shipped `database.sql` — and the hosted database — have
   `date`. I followed the database.
 
-The one change to the schema is `orders.idempotencyKey` and the partial unique index over
-it, [justified by what its absence
+The one change to a table is `orders.idempotencyKey` and the partial unique index over it,
+[justified by what its absence
 cost](#an-idempotency-key-turns-a-retried-placement-into-one-order). Nothing else moved: no
 column was renamed, retyped or dropped, and every existing row and query reads as it did.
+The views and indexes below are added beside the tables and change none of them.
 
-A database built from `db/init.sql` — compose, the test containers, CI — has it already;
-one that already exists needs [`db/idempotency-key.sql`](db/idempotency-key.sql): an
-`ADD COLUMN IF NOT EXISTS` and the same index `IF NOT EXISTS`, so applying it twice is a
-no-op. It is required rather than suggested, but still DDL, so the rule that governs
-`db/indexes.sql` below governs it too: apply it to a database you own, never to the shared
-challenge database — I did not, and neither should anyone who does not own it:
+A database built from `db/init.sql` — compose, the test containers, CI — has all of it
+already; one that already exists needs the two migration files:
+[`db/idempotency-key.sql`](db/idempotency-key.sql), an `ADD COLUMN IF NOT EXISTS` and its
+index `IF NOT EXISTS`, and [`db/views-and-indexes.sql`](db/views-and-indexes.sql),
+`CREATE OR REPLACE VIEW` and `CREATE INDEX IF NOT EXISTS`. Applying either twice is a
+no-op. Both are DDL: apply them to a database you own, never to the shared challenge
+database — I did not, and neither should anyone who does not own it.
 
 ```bash
 docker compose exec -T db psql -U postgres -d cocos -f /dev/stdin < db/idempotency-key.sql
+docker compose exec -T db psql -U postgres -d cocos -f /dev/stdin < db/views-and-indexes.sql
 ```
 
-`db/indexes.sql` is separate, and holds the two indexes the queries here would want —
-`orders(userid, instrumentid)` and `marketdata(instrumentid, date DESC)`, each with its
-justification. They are performance suggestions rather than guarantees, so they are **not**
-applied automatically, and only to a local database, never to the shared challenge
-database:
+### The folds are database views
 
-```bash
-docker compose exec -T db psql -U postgres -d cocos -f /dev/stdin < db/indexes.sql
-```
+`cash_balances`, `holdings` and `latest_closes` hold the three folds the API reads: the
+signed cash sum, the per-instrument net and average cost, and the latest close per
+instrument. The repository queries keep the rounding, the `MONEDA` exclusion and the
+`ORDER BY ticker`, and each is now a SELECT over a view — and because `holdings` answers
+both the portfolio's positions and the shares check placement runs inside its lock, and
+`latest_closes` both the portfolio's pricing and a MARKET order's execution price, the
+number that accepts a trade and the number displayed are one definition rather than two.
+Two indexes come with them, applied now rather than suggested: a partial covering
+`orders(userid, instrumentid, side) INCLUDE (size, price) WHERE status = 'FILLED'`, which
+answers all three folds without touching the table at all, and
+`marketdata(instrumentid, date DESC)`, which the planner passes over at the seed's 126 rows
+but wants once real market data arrives. A plain `orders(userid, instrumentid)` is not
+among them: nothing chose it, even at volume. Measured against 35,013 orders in the compose
+database: `GET /users/1/portfolio` p50 7.44 ms → 3.95 ms over 250 requests, and server-side
+over 500 iterations each the cash fold 1.69 → 0.65 ms, the held-shares fold 1.92 → 0.05 ms,
+and the positions query 2.60 → 0.71 ms on 424 → 40 buffers.
 
 ### Prisma is pinned to exactly 6.19.1
 

@@ -52,16 +52,9 @@ export class OrdersRepository {
     db: Prisma.TransactionClient = this.prisma,
   ): Promise<Quote | undefined> {
     const [instrument] = await db.$queryRaw<Quote[]>`
-      SELECT i.type, latest.close
+      SELECT i.type, c.close
       FROM instruments i
-      LEFT JOIN LATERAL (
-        SELECT m.close
-        FROM marketdata m
-        WHERE m.instrumentid = i.id
-        -- DESC alone sorts a NULL date first, and an undated row is not the latest close.
-        ORDER BY m.date DESC NULLS LAST
-        LIMIT 1
-      ) latest ON TRUE
+      LEFT JOIN latest_closes c ON c.instrumentid = i.id
       WHERE i.id = ${instrumentId}
     `;
     return instrument;

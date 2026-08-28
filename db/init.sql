@@ -27,11 +27,17 @@ CREATE TABLE orders (
   FOREIGN KEY (userId) REFERENCES users(id)
 );
 
--- The only addition to the challenge's schema: one row per user and key, so a retried
+-- The one change to the challenge's tables: one row per user and key, so a retried
 -- placement cannot become a second order. Partial, so the keyless seeded rows are exempt.
 CREATE UNIQUE INDEX orders_userid_idempotencykey_key
   ON orders (userId, idempotencyKey)
   WHERE idempotencyKey IS NOT NULL;
+
+-- The folds read filled rows only and read nothing this index does not carry, so they are
+-- answered without touching the table at all.
+CREATE INDEX orders_filled_userid_instrumentid_side_idx
+  ON orders (userId, instrumentId, side) INCLUDE (size, price)
+  WHERE status = 'FILLED';
 
 CREATE TABLE marketdata (
   id SERIAL PRIMARY KEY,
@@ -44,6 +50,49 @@ CREATE TABLE marketdata (
   date DATE,
   FOREIGN KEY (instrumentId) REFERENCES instruments(id)
 );
+
+-- "Latest close" is a per-instrument top-1 by descending date. The planner scans the
+-- 126-row seed instead; this serves the top-1 once real market data arrives.
+CREATE INDEX marketdata_instrumentid_date_idx
+  ON marketdata (instrumentId, date DESC);
+
+-- The three folds the API reads. Rounding, ordering and the MONEDA exclusion stay in the
+-- queries above them; a view that holds no row for a user is that user's zero.
+
+CREATE VIEW cash_balances AS
+SELECT
+  userId,
+  SUM(
+    CASE side
+      WHEN 'CASH_IN' THEN size * price
+      WHEN 'SELL' THEN size * price
+      WHEN 'CASH_OUT' THEN -size * price
+      WHEN 'BUY' THEN -size * price
+    END
+  ) AS cash
+FROM orders
+WHERE status = 'FILLED'
+GROUP BY userId;
+
+-- A net of zero is no position; a negative one is reported as it stands. SUM widens to
+-- bigint, and the client reads that as a BigInt, so the cast is load-bearing.
+CREATE VIEW holdings AS
+SELECT
+  userId,
+  instrumentId,
+  SUM(CASE WHEN side = 'BUY' THEN size ELSE -size END)::int AS quantity,
+  SUM(size * price) FILTER (WHERE side = 'BUY')
+    / NULLIF(SUM(size) FILTER (WHERE side = 'BUY'), 0) AS avg_cost
+FROM orders
+WHERE status = 'FILLED' AND side IN ('BUY', 'SELL')
+GROUP BY userId, instrumentId
+HAVING SUM(CASE WHEN side = 'BUY' THEN size ELSE -size END) <> 0;
+
+-- DESC alone sorts a NULL date first, and an undated row is not the latest close.
+CREATE VIEW latest_closes AS
+SELECT DISTINCT ON (instrumentId) instrumentId, close
+FROM marketdata
+ORDER BY instrumentId, date DESC NULLS LAST;
 
 INSERT INTO users (email,accountNumber) VALUES
    ('emiliano@test.com','10001'),
