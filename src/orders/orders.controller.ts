@@ -24,35 +24,33 @@ export class OrdersController {
     name: 'Idempotency-Key',
     required: true,
     description:
-      'Required, 1-64 characters of A-Z, a-z, 0-9, _ or -. Names the logical order rather ' +
-      'than the attempt, so it is generated once and reused verbatim on every retry of it.',
+      'Required, 1-64 characters of A-Z, a-z, 0-9, _ or -. Names the logical order, not ' +
+      'the attempt: generate it once and resend it on every retry.',
   })
   @ApiResponse({ status: 201, description: 'The order this request created.' })
   @ApiResponse({
     status: 400,
     description:
-      'The order is malformed, or the Idempotency-Key is missing, or it is not 1-64 ' +
+      'The order is malformed, or the Idempotency-Key is missing or outside 1-64 ' +
       'characters of A-Z, a-z, 0-9, _ or -.',
   })
   @ApiResponse({
     status: 200,
     description:
-      'The order an earlier request with this Idempotency-Key created, returned unchanged ' +
-      'and executed nothing a second time.',
+      'The order an earlier request with this Idempotency-Key created, returned ' +
+      'unchanged and executed nothing a second time.',
   })
   @ApiResponse({
     status: 503,
     description:
-      'The placement never got its turn. Safe to retry, and safe to retry with the same ' +
-      'Idempotency-Key: whether the shed request reached the database or not, the key ' +
-      'settles it to one order.',
+      'The placement never got its turn. Retry it with the same Idempotency-Key: the key ' +
+      'settles the shed request and the retry into one order.',
   })
   @Post()
   async place(
     @Body() order: PlaceOrderDto,
     @Headers('Idempotency-Key') key: string | undefined,
-    // Passthrough because only the status changes: the body is still returned the way
-    // every other handler here returns one.
+    // Passthrough because only the status changes: the body is returned as usual.
     @Res({ passthrough: true }) response: Response,
   ): Promise<OrderView> {
     const placed = await this.orders.place(order, idempotencyKey(key));

@@ -23,8 +23,7 @@ describe('Scaffold (e2e)', () => {
     app = moduleRef.createNestApplication();
     configureApp(app);
     await app.init();
-    // One listener for the whole suite: supertest otherwise opens and closes one per
-    // request, and a keep-alive socket reused across that close hangs the next request.
+    // One listener for the whole suite: supertest otherwise opens one per request, and a keep-alive socket reused across that close hangs the next.
     await app.listen(0);
   });
 

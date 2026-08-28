@@ -49,10 +49,8 @@ export function resolveSize({ size, amount, price }: Sizing): number {
     return size;
   }
 
-  // Whole shares are the floor of amount over price — for positive money, the truncation
-  // integer division already does. The bounds are asked of the operands rather than of the
-  // quotient: both can be in range with the quotient still past what an order can hold, and
-  // a price of 0.00 lands there instead of in a division by zero.
+  // Whole shares are the floor of amount over price, which for positive money is the
+  // truncation below. Bounded on the operands: a price of 0.00 lands here, not in a divide.
   if (amount! < price) {
     throw new OrderRuleError(
       `An amount of ${apiString(amount!)} buys no share at ${apiString(price)}`,

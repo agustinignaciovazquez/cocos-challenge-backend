@@ -102,7 +102,7 @@ export class PortfolioRepository {
         ORDER BY m.date DESC NULLS LAST
         LIMIT 1
       ) latest ON TRUE
-      -- Cash is the availableCash line, never a position, whatever side an order carries.
+      -- Cash is the availableCash line, never a position.
       WHERE i.type IS DISTINCT FROM 'MONEDA'
       ORDER BY i.ticker
     `;

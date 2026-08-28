@@ -37,8 +37,7 @@ describe('Order cancellation (e2e)', () => {
     app = moduleRef.createNestApplication();
     configureApp(app);
     await app.init();
-    // One listener for the whole suite: supertest otherwise opens and closes one per
-    // request, and a keep-alive socket reused across that close hangs the next request.
+    // One listener for the whole suite: supertest otherwise opens one per request, and a keep-alive socket reused across that close hangs the next.
     await app.listen(0);
     prisma = app.get(PrismaService);
   });
@@ -88,9 +87,8 @@ describe('Order cancellation (e2e)', () => {
   });
 
   it('lets only one of two concurrent cancels through', async () => {
-    // Opens a pooled connection for each cancel up front: against a cold pool the second
-    // request queues behind connection setup instead of overlapping the first, which
-    // would hide a read-then-write race rather than expose it.
+    // A pooled connection per cancel up front: against a cold pool the second request
+    // queues behind connection setup and would hide a read-then-write race.
     await Promise.all([cancel(9999).expect(404), cancel(9999).expect(404)]);
 
     const [first, second] = await Promise.all([

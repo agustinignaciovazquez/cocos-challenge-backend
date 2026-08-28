@@ -4,8 +4,8 @@ import { idempotencyKey } from './idempotency-key';
 describe('idempotencyKey', () => {
   it('refuses a request that sends no key', () => {
     expect(() => idempotencyKey(undefined)).toThrow(BadRequestException);
-    // A message of its own: a caller that sent nothing is told to send a key, not told
-    // that the key it sent was the wrong shape.
+    // Its own message: a caller that sent nothing is asked for a key, not told its key
+    // was the wrong shape.
     expect(() => idempotencyKey(undefined)).toThrow(
       /^Idempotency-Key is required/,
     );

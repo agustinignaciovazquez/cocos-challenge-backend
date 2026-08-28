@@ -15,9 +15,8 @@ import { OrderType, ORDER_TYPES, Side, SIDES } from './order-rules';
 const MIN_MONEY = 0.01;
 const MAX_MONEY = 99_999_999.99; // NUMERIC(10, 2)
 
-// The range is measured before the decimals: class-validator counts those off
-// `value.toString().split('.')[1]`, which is undefined — and throws — on the exponent form
-// JavaScript renders below 1e-6 and from 1e21 up.
+// Range before decimals: class-validator counts decimals off `toString().split('.')[1]`,
+// which is undefined — and throws — on the exponent form below 1e-6 and from 1e21 up.
 const isMoney = (value: unknown): boolean =>
   isNumber(value) &&
   value >= MIN_MONEY &&
@@ -40,8 +39,8 @@ class LimitPrice implements ValidatorConstraintInterface {
   }
 }
 
-// The exclusivity is a property of the request, not of the sizing, so it is settled here:
-// a malformed order is turned away before it opens a transaction or looks anything up.
+// Settled here, not in the sizing, so a malformed order is turned away before it opens a
+// transaction or looks anything up.
 @ValidatorConstraint({ name: 'sizeOrAmount' })
 class SizeOrAmount implements ValidatorConstraintInterface {
   validate(size: unknown, { object }: ValidationArguments): boolean {
@@ -59,8 +58,8 @@ class SizeOrAmount implements ValidatorConstraintInterface {
   }
 }
 
-// Absence is spelled out rather than left to `@IsOptional()`, which waives the whole
-// property for a null too — and a null amount is not an amount left out, it is a bad one.
+// Not `@IsOptional()`: that waives the property for a null too, and a null amount is a
+// bad amount rather than an absent one.
 @ValidatorConstraint({ name: 'money' })
 class Money implements ValidatorConstraintInterface {
   validate(value: unknown): boolean {

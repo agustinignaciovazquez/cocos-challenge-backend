@@ -24,8 +24,7 @@ export type OrderView = Omit<OrderRow, 'price' | 'datetime'> & {
   datetime: string;
 };
 
-// `replayed` is the status the controller answers with, not part of the order: a replay
-// hands back the row a previous request created, so it is a 200 rather than a 201.
+// `replayed` is for the controller, not the order: a replay answers 200, not 201.
 export type Placed = { order: OrderView; replayed: boolean };
 
 const CANCELLABLE = ORDER_STATUSES.filter((status) =>
@@ -46,8 +45,8 @@ export class OrdersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly repository: OrdersRepository,
-    // The portfolio folds decide placements so the number that accepts an order is the
-    // same number the portfolio displays — duplicating those sums would let them drift.
+    // Placement uses the portfolio folds so the number that accepts an order and the
+    // number the portfolio displays cannot drift.
     private readonly portfolio: PortfolioRepository,
   ) {}
 
@@ -58,8 +57,7 @@ export class OrdersService {
         {
           isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
           // Both bound queueing, not work: the placement is half a dozen indexed
-          // statements, so 5s waiting for a connection or 10s inside the advisory-lock
-          // queue means load, not a slow query.
+          // statements, so running out means load, not a slow query.
           maxWait: 5_000,
           timeout: 10_000,
         },
@@ -68,8 +66,7 @@ export class OrdersService {
       if (error instanceof OrderRuleError) {
         throw new BadRequestException(error.message);
       }
-      // P2028 is the transaction giving up on one of those two waits: the server is busy,
-      // not broken, and the caller's own order is intact to send again.
+      // P2028 is one of those two waits giving up: busy, not broken, safe to send again.
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2028'
@@ -83,10 +80,8 @@ export class OrdersService {
   }
 
   async cancel(id: number): Promise<OrderView> {
-    // The transition is the UPDATE's own condition, so concurrent cancels cannot both
-    // match the row and no lock is needed: placement only ever inserts. Should NEW orders
-    // ever reserve funds, cancel starts moving a balance and must take the same advisory
-    // lock placement holds.
+    // No lock: the transition is the UPDATE's own condition and placement only inserts.
+    // If NEW orders ever reserve funds, cancel must take the placement lock too.
     const cancelled = await this.repository.cancel(id, CANCELLABLE);
 
     if (cancelled === undefined) {
@@ -107,17 +102,12 @@ export class OrdersService {
     key: string,
     tx: Prisma.TransactionClient,
   ): Promise<Placed> {
-    // Serialises a user's placements so two cannot both spend the same balance — which
-    // holds only under READ COMMITTED, where the balance is read after the wait: a
-    // repeatable-read snapshot predates the wait and would still show it unspent.
+    // Serialises a user's placements so two cannot spend the same balance. Only correct
+    // under READ COMMITTED: a repeatable-read snapshot predates the wait.
     await this.repository.lockPlacements(order.userId, tx);
 
-    // Under that lock a user's placements cannot interleave, so a key that misses here is
-    // still free at the insert below. The unique index behind it is the backstop, and its
-    // violation is left uncaught on purpose: reaching one would mean the lock had stopped
-    // serialising, which is a 500 rather than something to paper over. A hit returns the
-    // stored row whatever it says and whatever this request asked for — a replay reports
-    // the first decision instead of making a second one.
+    // Under the lock a key that misses here is still free at the insert; the index is the
+    // backstop, uncaught on purpose — a 500 beats papering over a lock that stopped working.
     const replayed = await this.repository.byIdempotencyKey(
       order.userId,
       key,

@@ -35,8 +35,8 @@ export class PortfolioService {
       throw new NotFoundException(`User ${userId} not found`);
     }
 
-    // Repeatable read: cash and holdings come from one snapshot, so an order settling
-    // mid-request cannot be counted in both halves of totalValue, or in neither.
+    // Repeatable read: one snapshot for both, so an order settling mid-request cannot
+    // land in both halves of totalValue, or in neither.
     const { cash, holdings } = await this.prisma.$transaction(
       async (tx) => ({
         cash: await this.repository.availableCash(userId, tx),

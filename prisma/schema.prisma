@@ -37,8 +37,8 @@ model Order {
   side           String?     @db.VarChar(10)
   status         String?     @db.VarChar(20)
   datetime       DateTime?   @db.Timestamp(6)
-  // Unique per user where it is present. The constraint is a partial index and lives in
-  // db/init.sql: a Prisma unique cannot carry the WHERE that leaves unkeyed rows alone.
+  // Unique per user where present. The constraint is a partial index in db/init.sql: a
+  // Prisma unique cannot carry the WHERE that leaves unkeyed rows alone.
   idempotencyKey String?     @map("idempotencykey")
   instrument     Instrument? @relation(fields: [instrumentId], references: [id])
   user           User?       @relation(fields: [userId], references: [id])

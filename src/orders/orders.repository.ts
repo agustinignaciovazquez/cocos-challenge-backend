@@ -20,19 +20,15 @@ export type OrderRow = {
 
 export type NewOrder = Omit<OrderRow, 'id' | 'price' | 'datetime'> & {
   price: bigint;
-  // Not `string | null`, though the column is: the rows that carry no key are the seeded
-  // ones, written before the header was asked for, and placement cannot add another.
+  // Not `string | null` though the column is: only seeded rows carry no key.
   idempotencyKey: string;
 };
 
-// The class half of the placement lock's key. Postgres keeps every advisory lock in one
-// global space, so a bare `userId` is a number anyone can take — a component locking on
-// 7 for reasons of its own would block user 7's placements. The value is the ASCII of
-// 'ORDR', distinctive enough that a collision would have to be deliberate.
+// Class half of the placement lock's key: advisory locks share one global space, so a bare
+// `userId` is a number anyone could take. The value is the ASCII of 'ORDR'.
 export const PLACEMENTS_LOCK = 0x4f524452;
 
-// The projection every statement here reads an order back through, written once so the
-// aliases that undo the schema's lowercasing cannot drift between them.
+// One projection for every statement here; the aliases undo the schema's lowercasing.
 const COLUMNS = Prisma.sql`id, instrumentid AS "instrumentId", userid AS "userId",
                            side, size, price, type, status, datetime`;
 
@@ -40,10 +36,8 @@ const COLUMNS = Prisma.sql`id, instrumentid AS "instrumentId", userid AS "userId
 export class OrdersRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  // No client default, unlike its siblings: an advisory lock taken outside a transaction
-  // is released with the statement that takes it, and serialises nothing. The casts are
-  // what reach the two-key overload: a bound number arrives as a bigint, and the form
-  // that takes a class alongside the key is the one declared for a pair of int4s.
+  // No client default: a lock taken outside a transaction is released with its statement.
+  // The casts reach the two-key overload, which is declared for a pair of int4s.
   async lockPlacements(
     userId: number,
     tx: Prisma.TransactionClient,
@@ -79,8 +73,8 @@ export class OrdersRepository {
   ): Promise<OrderRow> {
     const [created] = await db.$queryRaw<OrderRow[]>`
       INSERT INTO orders (instrumentid, userid, size, price, side, status, type, datetime, idempotencykey)
-      -- Money leaves the application as its two-decimal string, and the cast is what binds
-      -- that as a number: the column refuses the text a string is otherwise sent as.
+      -- Money leaves as a two-decimal string; the cast binds it as a number, which the
+      -- column needs — it refuses the text a string is otherwise sent as.
       VALUES (${order.instrumentId}, ${order.userId}, ${order.size}, ${apiString(order.price)}::numeric,
               ${order.side}, ${order.status}, ${order.type}, ${new Date()}, ${order.idempotencyKey})
       RETURNING ${COLUMNS}
@@ -114,8 +108,8 @@ export class OrdersRepository {
     return cancelled;
   }
 
-  // `string | null` because the column is nullable and this reads any row; OrderRow can
-  // promise OrderStatus because RETURNING only echoes statuses this application wrote.
+  // `string | null` because the column is nullable and this reads any row, not just the
+  // rows this application wrote.
   async statusOf(
     id: number,
     db: Prisma.TransactionClient = this.prisma,

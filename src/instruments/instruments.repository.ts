@@ -6,8 +6,8 @@ import { PrismaService } from '../prisma/prisma.service';
 export class InstrumentsRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  // `position` and `starts_with` compare strings rather than patterns: `%`, `_` and `\`
-  // are the characters someone typed, so nothing has to be rewritten on the way in.
+  // `position` and `starts_with` compare strings, not patterns, so `%`, `_` and `\` are
+  // literal characters and nothing needs escaping on the way in.
   search(term: string, limit: number): Promise<Instrument[]> {
     return this.prisma.$queryRaw<Instrument[]>`
       SELECT id, ticker, name, type

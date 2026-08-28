@@ -10,9 +10,8 @@ import { OrdersRepository } from './orders.repository';
 import { OrdersService } from './orders.service';
 import { PlaceOrderDto } from './place-order.dto';
 
-// What the placement transaction throws is mapped outside it, so it is unit-tested here:
-// provoking a real P2028 would mean holding the lock past the 10s the service allows, and
-// an e2e that sleeps that long buys nothing the stub does not already prove.
+// The mapping happens outside the transaction, so it is unit-tested here: a real P2028
+// would mean holding the lock past the 10s the service allows.
 const placing = (failure: Error): Promise<unknown> =>
   new OrdersService(
     { $transaction: () => Promise.reject(failure) } as unknown as PrismaService,

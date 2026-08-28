@@ -18,8 +18,8 @@ const PAMP = 47;
 const YPFD = 50;
 const OPEN_ORDER = 5;
 
-// The one body the idempotency cases send: what they assert is which requests become an
-// order, so the order itself stays the same between them and is small enough to repeat.
+// The one body the idempotency cases send: they assert which requests become an order,
+// so the order itself stays the same between them.
 const ONE_PAMP = {
   userId: 1,
   instrumentId: PAMP,
@@ -34,14 +34,14 @@ const sleep = (ms: number): Promise<void> =>
 const diagnosis = (response: request.Response): string =>
   (response.body as { message: string[] }).message[0];
 
-// The two 400s are read apart because they arrive in different shapes: the DTO's is the
-// array of every rule the body broke, the header's is the one string the handler threw.
+// The two 400s arrive in different shapes: the DTO's is an array of every rule the body
+// broke, the header's is the one string the handler threw.
 const refusal = (response: request.Response): string =>
   (response.body as { message: string }).message;
 
 const LOCK_POLL_MS = 50;
-// Well under half the placement transaction's 10s timeout, so a lock that never appears
-// fails this poll instead of coming back as the 503 that timeout maps to.
+// Well under the placement's 10s timeout, so a lock that never appears fails this poll
+// instead of coming back as the 503 that timeout maps to.
 const LOCK_POLL_ATTEMPTS = 80;
 
 describe('Orders (e2e)', () => {
@@ -53,10 +53,8 @@ describe('Orders (e2e)', () => {
   const unkeyed = (order: object): request.Test =>
     request(app.getHttpServer()).post('/orders').send(order);
 
-  // Every placement below is a logical order of its own, so each carries a key of its own:
-  // one key shared between two of them would replay the first instead of placing the
-  // second. The cases about replaying name the key they share; this counter answers for
-  // the rest, and `unkeyed` is left to the one case that pins a missing header.
+  // Every placement is a logical order of its own, so each carries its own key: a shared
+  // one would replay the first. The replay cases name their key; `unkeyed` pins the 400.
   let placements = 0;
   const post = (order: object): request.Test =>
     unkeyed(order).set('Idempotency-Key', `case-${++placements}`);
@@ -91,14 +89,12 @@ describe('Orders (e2e)', () => {
   const availableCash = async (userId: number): Promise<string> =>
     (await portfolio(userId)).availableCash;
 
-  // Opens a pooled connection per racer up front: against a cold pool the second request
-  // queues behind connection setup instead of overlapping the first, which would hide a
-  // missing lock rather than expose it.
+  // A pooled connection per racer up front: against a cold pool the second request queues
+  // behind connection setup instead of overlapping the first, hiding a missing lock.
   const warmPool = (userId: number): Promise<string[]> =>
     Promise.all([availableCash(userId), availableCash(userId)]);
 
-  // A blocked placement is invisible from the API — its query only returns once the lock
-  // frees — so the wait is read off pg_locks instead of timed.
+  // A blocked placement is invisible from the API, so the wait is read off pg_locks.
   const awaitAdvisoryLock = async (
     userId: number,
     granted: boolean,
@@ -108,9 +104,8 @@ describe('Orders (e2e)', () => {
         SELECT count(*)::int AS locks
         FROM pg_locks
         WHERE locktype = 'advisory' AND granted = ${granted}
-          -- The repository locks on the two-key form: the class lands in classid, the user
-          -- in objid and objsubid is 2, where a single-bigint key would put its own high
-          -- half in classid and leave a 1 — so a lock that lost its class matches nothing.
+          -- The two-key form: class in classid, user in objid, objsubid 2. A single-bigint
+          -- key would put its high half in classid and leave objsubid 1.
           AND classid::bigint = ${PLACEMENTS_LOCK} AND objid::bigint = ${userId}
           AND objsubid = 2
       `;
@@ -135,8 +130,7 @@ describe('Orders (e2e)', () => {
     app = moduleRef.createNestApplication();
     configureApp(app);
     await app.init();
-    // One listener for the whole suite: supertest otherwise opens and closes one per
-    // request, and a keep-alive socket reused across that close hangs the next request.
+    // One listener for the whole suite: supertest otherwise opens one per request, and a keep-alive socket reused across that close hangs the next.
     await app.listen(0);
     prisma = app.get(PrismaService);
     outsider = new PrismaClient();
@@ -169,7 +163,7 @@ describe('Orders (e2e)', () => {
       datetime: expect.any(String) as string,
     });
     // The body is the row read back from the insert, so a timestamp stored in the wrong
-    // zone would come back hours away from the placement it reports.
+    // zone would come back hours off.
     expect(Math.abs(Date.now() - Date.parse(order.datetime))).toBeLessThan(
       60_000,
     );
@@ -293,8 +287,8 @@ describe('Orders (e2e)', () => {
       size: 10,
     }).expect(400);
 
-    // The two diagnoses are anchored apart on purpose: one message covering both used to
-    // answer size: 0 by asking for one of size or amount, which was not the problem.
+    // Anchored apart on purpose: one message covering both used to answer size: 0 by
+    // asking for one of size or amount, which was not the problem.
     expect(diagnosis(exclusive)).toMatch(
       /^send exactly one of size or amount$/,
     );
@@ -402,8 +396,8 @@ describe('Orders (e2e)', () => {
       'FILLED',
       'REJECTED',
     ]);
-    // 100,000 in, 4,500 spent on the shares, 4,629.25 back from the single sale; the
-    // position folds to zero and never past it, so no position is left to report.
+    // 100,000 in, 4,500 on the shares, 4,629.25 back from the single sale; the position
+    // folds to zero and never past it, so none is left to report.
     expect(await portfolio(3)).toMatchObject({
       availableCash: '100129.25',
       positions: [],
@@ -420,9 +414,8 @@ describe('Orders (e2e)', () => {
     const held = new Promise<void>((resolve) => {
       release = () => resolve();
     });
-    // Holds the placement lock from a connection of its own and spends the balance before
-    // committing, so scheduling plays no part: the buy can only reject if it reads the
-    // balance after the wait, which is exactly what READ COMMITTED guarantees.
+    // Holds the lock from its own connection and spends the balance before committing, so
+    // the buy can only reject if it reads the balance after the wait — READ COMMITTED.
     const holding = outsider.$transaction(
       async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${PLACEMENTS_LOCK}::int, 4)`;
@@ -453,8 +446,8 @@ describe('Orders (e2e)', () => {
       await awaitAdvisoryLock(4, false);
       expect(settled).toBe(false);
     } finally {
-      // Releasing under finally: a failed poll or assertion would otherwise leave the
-      // holder pinning the lock — and the placement queued behind it — for its full 30s.
+      // Under finally: a failed poll or assertion would otherwise pin the lock, and the
+      // placement queued behind it, for the holder's full 30s.
       release();
     }
     await holding;
@@ -481,8 +474,8 @@ describe('Orders (e2e)', () => {
 
     expect((cancelled.body as OrderView).status).toBe('CANCELLED');
     expect(placed.status).toBe('FILLED');
-    // The buy is the only thing that moved cash: a cancelled NEW order releases nothing
-    // because it reserved nothing.
+    // Only the buy moved cash: a cancelled NEW order releases nothing, having reserved
+    // nothing.
     const spent = new Prisma.Decimal(placed.price).times(placed.size);
     expect(await availableCash(1)).toBe(
       new Prisma.Decimal(before).minus(spent).toFixed(2),
@@ -495,9 +488,7 @@ describe('Orders (e2e)', () => {
 
     expect(await placeWithKey(ONE_PAMP, key, 200)).toEqual(placed);
     expect(await rowsFor(key)).toBe(1);
-    // The key identifies the request, not the order, so it is no part of the order the
-    // response reports: the body says what the market decided and nothing about the name
-    // the request was sent under.
+    // The key names the request, not the order, so it is no part of the response body.
     expect(placed).not.toHaveProperty('idempotencyKey');
   });
 
@@ -506,7 +497,7 @@ describe('Orders (e2e)', () => {
     const bought = await placeWithKey(ONE_PAMP, key, 201);
 
     // A different order under a spent key is still a replay: taking the second body would
-    // place an order the caller sent one key for, which is the duplicate this prevents.
+    // place a second order under one key, the duplicate this prevents.
     const sell = { ...ONE_PAMP, instrumentId: METR, side: 'SELL', size: 5 };
     expect(await placeWithKey(sell, key, 200)).toEqual(bought);
     expect(await rowsFor(key)).toBe(1);
@@ -516,8 +507,8 @@ describe('Orders (e2e)', () => {
     const key = 'one-key-two-users';
     const mine = await placeWithKey(ONE_PAMP, key, 201);
 
-    // Keys are the caller's to invent, so two of them will collide eventually. Only the
-    // user who spent one can replay it: for anyone else it is a key that was never used.
+    // Keys are the caller's to invent, so two will collide eventually. Only the user who
+    // spent one can replay it; for anyone else it was never used.
     const theirs = await placeWithKey({ ...ONE_PAMP, userId: 2 }, key, 201);
 
     expect(theirs.id).not.toBe(mine.id);
@@ -535,12 +526,12 @@ describe('Orders (e2e)', () => {
   it('turns away a placement sent with no key, persisting nothing', async () => {
     const before = await prisma.order.count();
 
-    // The header is the contract, not an option the caller may decline: an order this
-    // service cannot name is one a retry of it cannot be told apart from.
+    // The header is the contract: an order this service cannot name cannot be told apart
+    // from a retry of it.
     const refused = await unkeyed(ONE_PAMP).expect(400);
 
     // Half of a pair: the malformed case below pins the other message, so collapsing the
-    // two into one answer fails here rather than passing quietly.
+    // two into one answer fails here.
     expect(refusal(refused)).toMatch(/^Idempotency-Key is required/);
     expect(await prisma.order.count()).toBe(before);
   });
@@ -554,8 +545,8 @@ describe('Orders (e2e)', () => {
       withKey(ONE_PAMP, key),
     ]);
 
-    // The placement lock serialises the pair, so the second one reads the row the first
-    // committed: one creation, one replay, and a single order between them.
+    // The placement lock serialises the pair, so the second reads the row the first
+    // committed: one creation, one replay, one order.
     expect([first.status, second.status].sort()).toEqual([200, 201]);
     expect((first.body as OrderView).id).toBe((second.body as OrderView).id);
     expect(await rowsFor(key)).toBe(1);
@@ -582,8 +573,8 @@ describe('Orders (e2e)', () => {
     const key = 'the-index-is-the-backstop';
     await placeWithKey(ONE_PAMP, key, 201);
 
-    // The lock is what stops the service from trying; the partial unique index is what
-    // makes the second row impossible whoever writes it.
+    // The lock stops the service from trying; the partial unique index makes the second
+    // row impossible whoever writes it.
     await expect(prisma.$executeRaw`
       INSERT INTO orders (instrumentid, userid, size, price, side, status, type, datetime, idempotencykey)
       VALUES (${PAMP}, 1, 1, 925.85, 'BUY', 'FILLED', 'MARKET', '2023-07-14 10:00:00', ${key})
@@ -600,8 +591,8 @@ describe('Orders (e2e)', () => {
     const spaced = await withKey(ONE_PAMP, 'has space').expect(400);
     await withKey(ONE_PAMP, 'a/b').expect(400);
 
-    // The other half of that pair: a key that is present and wrong is answered by the
-    // alphabet it broke, not by being asked for a key it already sent.
+    // The other half of that pair: a key present and wrong is answered by the alphabet it
+    // broke, not asked for again.
     expect(refusal(spaced)).toMatch(/^Idempotency-Key must be/);
     expect(await prisma.order.count()).toBe(before);
   });

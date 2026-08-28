@@ -1,9 +1,8 @@
 # Every endpoint, happy and failure paths, against a database seeded from db/init.sql.
 # VS Code REST Client: start the API, then "Send Request" above any case below.
-# Every placement carries the Idempotency-Key it is now required to send, and each names a
-# logical order of its own — only the two replay pairs share one. So a 201 case re-sent
-# under its own key answers 200 with the order it already placed, which is the mechanism
-# working rather than the case failing.
+
+# Every placement carries its own Idempotency-Key; only the two replay pairs share one. So
+# a 201 case re-sent answers 200 with the order it already placed, which is the mechanism.
 
 @baseUrl = http://localhost:3000
 
@@ -22,7 +21,7 @@ GET {{baseUrl}}/instruments?q=zzz
 ### 400: the search term is required
 GET {{baseUrl}}/instruments
 
-### 400: a blank search term is no term at all
+### 400: a blank search term is no term
 GET {{baseUrl}}/instruments?q=%20%20
 
 ### 200: the portfolio of a user, cash plus positions
@@ -34,7 +33,7 @@ GET {{baseUrl}}/users/999/portfolio
 ### 400: the user id must be a number
 GET {{baseUrl}}/users/abc/portfolio
 
-### 400: an id beyond the range of the id column is turned away, not looked up
+### 400: an id beyond the range of the id column, turned away rather than looked up
 GET {{baseUrl}}/users/9999999999/portfolio
 
 ### 201 FILLED: a market buy executes at the latest close
@@ -121,7 +120,7 @@ Idempotency-Key: b903e54c-market-with-a-price
 
 { "userId": 1, "instrumentId": 47, "side": "BUY", "type": "MARKET", "price": 900, "size": 10 }
 
-### 400: money below the cent does not exist
+### 400: money below the cent
 POST {{baseUrl}}/orders
 Content-Type: application/json
 Idempotency-Key: 48d17fa2-price-below-the-cent
@@ -135,7 +134,7 @@ Idempotency-Key: e6c25b70-side-that-is-not-a-side
 
 { "userId": 1, "instrumentId": 47, "side": "HOLD", "type": "MARKET", "size": 10 }
 
-### 400: an order without a userId is malformed, not an order for an unknown user
+### 400: no userId is malformed, not an order for an unknown user
 POST {{baseUrl}}/orders
 Content-Type: application/json
 Idempotency-Key: 19f4d83b-order-without-a-user
@@ -170,54 +169,54 @@ Idempotency-Key: ca07f462-order-for-an-unknown-instrument
 
 { "userId": 1, "instrumentId": 9999, "side": "BUY", "type": "MARKET", "size": 10 }
 
-### 201 FILLED: the first request under a key — the key names the logical order, not the attempt
+### 201 FILLED: the first request under a key
 POST {{baseUrl}}/orders
 Content-Type: application/json
 Idempotency-Key: 7f3a1c9e-buy-pamp-10
 
 { "userId": 1, "instrumentId": 47, "side": "BUY", "type": "MARKET", "size": 10 }
 
-### 200: the same key replays that order instead of placing a second one (send the case above first)
+### 200: the same key replays that order, placing nothing (send the case above first)
 POST {{baseUrl}}/orders
 Content-Type: application/json
 Idempotency-Key: 7f3a1c9e-buy-pamp-10
 
 { "userId": 1, "instrumentId": 47, "side": "BUY", "type": "MARKET", "size": 10 }
 
-### 201 REJECTED: the sell the next case replays — the held shares cannot cover it
+### 201 REJECTED: the sell the next case replays; the held shares cannot cover it
 POST {{baseUrl}}/orders
 Content-Type: application/json
 Idempotency-Key: 2b8d05af-sell-metr-999
 
 { "userId": 1, "instrumentId": 54, "side": "SELL", "type": "MARKET", "size": 999 }
 
-### 200: replaying a key returns the rejection it recorded, it does not decide again
+### 200: a replay returns the recorded rejection, it does not decide again
 POST {{baseUrl}}/orders
 Content-Type: application/json
 Idempotency-Key: 2b8d05af-sell-metr-999
 
 { "userId": 1, "instrumentId": 54, "side": "SELL", "type": "MARKET", "size": 999 }
 
-### 400: a placement that sends no Idempotency-Key at all
+### 400: no Idempotency-Key at all
 POST {{baseUrl}}/orders
 Content-Type: application/json
 
 { "userId": 1, "instrumentId": 47, "side": "BUY", "type": "MARKET", "size": 10 }
 
-### 400: an Idempotency-Key outside the 1-64 characters of A-Z, a-z, 0-9, _ and -
+### 400: an Idempotency-Key outside 1-64 characters of A-Z, a-z, 0-9, _ and -
 POST {{baseUrl}}/orders
 Content-Type: application/json
 Idempotency-Key: not a key
 
 { "userId": 1, "instrumentId": 47, "side": "BUY", "type": "MARKET", "size": 10 }
 
-### 200: cancelling the seeded open order returns it as CANCELLED
+### 200: cancelling the seeded open order returns it CANCELLED
 PATCH {{baseUrl}}/orders/5/cancel
 
 ### 409: an order the seed already carries as CANCELLED cannot be cancelled again
 PATCH {{baseUrl}}/orders/3/cancel
 
-### 409: a filled order cannot be cancelled
+### 409: a FILLED order cannot be cancelled
 PATCH {{baseUrl}}/orders/2/cancel
 
 ### 404: unknown order

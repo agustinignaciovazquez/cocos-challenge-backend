@@ -1,16 +1,11 @@
 import { BadRequestException } from '@nestjs/common';
 
-// Anchored with a lookahead rather than `$`, which in JavaScript matches before a trailing
-// newline too — the one character a header value must never carry through.
+// Anchored with a lookahead, not `$`: in JavaScript `$` also matches before a trailing
+// newline, the one character a header value must never carry through.
 const KEY = /^[A-Za-z0-9_-]{1,64}(?![\s\S])/;
 
-// A function rather than a pipe because `@Headers()` is the one param decorator Nest does
-// not run pipes for. The alphabet is deliberately narrow: the key is opaque to this
-// service, so refusing whitespace, newlines and anything past 64 characters costs a caller
-// nothing and gives the column a bound the schema does not. An absent header is refused
-// rather than let through, because a safety a caller may skip is not one this service can
-// promise — the duplicate it prevents costs money, and only the caller's own key names the
-// order a retry repeats.
+// A function rather than a pipe: `@Headers()` is the one param decorator Nest runs no
+// pipes for. The 64 is the column's only bound — the schema stores the key as TEXT.
 export function idempotencyKey(sent: string | undefined): string {
   if (sent === undefined) {
     throw new BadRequestException(

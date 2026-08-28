@@ -1,4 +1,4 @@
-// First, and before AppModule: PrismaClient reads DATABASE_URL when it is constructed.
+// Before AppModule: PrismaClient reads DATABASE_URL when it is constructed.
 import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
