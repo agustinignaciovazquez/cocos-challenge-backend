@@ -25,6 +25,7 @@ El panel web va aparte:
 cd tools/web
 npm install
 npm run dev    # http://localhost:5173 — `/` es trading, `/backoffice` es el panel
+SIM_URL=http://localhost:2981 npm run dev -- --port 2982   # si esos puertos están ocupados
 ```
 
 Vite proxea todo al harness en `:3001` y el navegador nunca le pega directo a la API, así
