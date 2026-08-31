@@ -26,6 +26,8 @@ comentada en `.env.example`) y aplicale antes las migraciones de
   `/docs-json`).
 - Colección de requests: [`requests.http`](requests.http) — 40 casos, cada endpoint con su
   camino feliz y sus errores, para la extensión REST Client de VS Code.
+- Los mismos 40 casos como colección de Bruno en [`bruno/`](bruno): abrila con la app o
+  corrélos enteros con `cd bruno && npx @usebruno/cli run --env local`.
 - `npm run start:prod` sirve el build compilado; `PORT` cambia el puerto.
 
 ### Tests

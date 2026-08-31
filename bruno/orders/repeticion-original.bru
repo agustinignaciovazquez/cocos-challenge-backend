@@ -1,0 +1,29 @@
+meta {
+  name: 201 FILLED: el primer request bajo una clave
+  type: http
+  seq: 20
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: 7f3a1c9e-buy-pamp-10
+}
+
+body:json {
+  { "userId": 1, "instrumentId": 47, "side": "BUY", "type": "MARKET", "size": 10 }
+}
+
+assert {
+  res.status: in 200, 201
+}
+
+docs {
+  Coloca en la primera corrida (201) y repite en las siguientes (200), porque la clave
+  ya quedó guardada. Por eso la aserción acepta los dos códigos.
+}

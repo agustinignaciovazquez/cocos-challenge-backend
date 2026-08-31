@@ -1,0 +1,15 @@
+meta {
+  name: 409: una orden que el seed ya trae CANCELLED no se puede cancelar de nuevo
+  type: http
+  seq: 2
+}
+
+patch {
+  url: {{baseUrl}}/orders/3/cancel
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 409
+}

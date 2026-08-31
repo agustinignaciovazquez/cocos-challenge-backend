@@ -1,0 +1,29 @@
+meta {
+  name: 201 FILLED: un monto compra acciones enteras al close (10000 / 925.85 = 10)
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: 84c0d3e6-buy-pamp-for-10000
+}
+
+body:json {
+  { "userId": 1, "instrumentId": 47, "side": "BUY", "type": "MARKET", "amount": 10000 }
+}
+
+assert {
+  res.status: in 200, 201
+}
+
+docs {
+  Coloca en la primera corrida (201) y repite en las siguientes (200), porque la clave
+  ya quedó guardada. Por eso la aserción acepta los dos códigos.
+}

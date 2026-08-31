@@ -1,0 +1,29 @@
+meta {
+  name: 201 REJECTED: las acciones en cartera no cubren la venta
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: 6b2fa951-sell-metr-999
+}
+
+body:json {
+  { "userId": 1, "instrumentId": 54, "side": "SELL", "type": "MARKET", "size": 999 }
+}
+
+assert {
+  res.status: in 200, 201
+}
+
+docs {
+  Coloca en la primera corrida (201) y repite en las siguientes (200), porque la clave
+  ya quedó guardada. Por eso la aserción acepta los dos códigos.
+}

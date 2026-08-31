@@ -1,0 +1,24 @@
+meta {
+  name: 404: una orden para un usuario que no existe
+  type: http
+  seq: 18
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: 35e8b1d7-order-for-an-unknown-user
+}
+
+body:json {
+  { "userId": 999, "instrumentId": 47, "side": "BUY", "type": "MARKET", "size": 10 }
+}
+
+assert {
+  res.status: eq 404
+}

@@ -1,0 +1,15 @@
+meta {
+  name: 200: sin coincidencias es una lista vacía, no un error
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/instruments?q=zzz
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}

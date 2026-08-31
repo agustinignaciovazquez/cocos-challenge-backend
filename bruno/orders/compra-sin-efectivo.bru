@@ -1,0 +1,29 @@
+meta {
+  name: 201 REJECTED: el efectivo disponible no cubre la compra
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: 1e77c38d-buy-ypfd-10000
+}
+
+body:json {
+  { "userId": 1, "instrumentId": 50, "side": "BUY", "type": "MARKET", "size": 10000 }
+}
+
+assert {
+  res.status: in 200, 201
+}
+
+docs {
+  Coloca en la primera corrida (201) y repite en las siguientes (200), porque la clave
+  ya quedó guardada. Por eso la aserción acepta los dos códigos.
+}

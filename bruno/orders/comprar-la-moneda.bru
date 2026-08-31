@@ -1,0 +1,24 @@
+meta {
+  name: 400: la moneda misma no se opera
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: 7ab3e016-buy-the-currency
+}
+
+body:json {
+  { "userId": 1, "instrumentId": 66, "side": "BUY", "type": "MARKET", "size": 10 }
+}
+
+assert {
+  res.status: eq 400
+}

@@ -1,0 +1,15 @@
+meta {
+  name: 400: el id de usuario tiene que ser un número
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/users/abc/portfolio
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 400
+}

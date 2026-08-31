@@ -1,0 +1,29 @@
+meta {
+  name: 201 NEW: una compra LIMIT queda en su precio límite
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: 9a4b6f02-limit-pamp-900
+}
+
+body:json {
+  { "userId": 1, "instrumentId": 47, "side": "BUY", "type": "LIMIT", "price": 900, "size": 10 }
+}
+
+assert {
+  res.status: in 200, 201
+}
+
+docs {
+  Coloca en la primera corrida (201) y repite en las siguientes (200), porque la clave
+  ya quedó guardada. Por eso la aserción acepta los dos códigos.
+}

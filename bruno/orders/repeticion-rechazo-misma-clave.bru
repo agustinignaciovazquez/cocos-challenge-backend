@@ -1,0 +1,29 @@
+meta {
+  name: 200: una repetición devuelve el rechazo guardado, no vuelve a decidir
+  type: http
+  seq: 23
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: 2b8d05af-sell-metr-999
+}
+
+body:json {
+  { "userId": 1, "instrumentId": 54, "side": "SELL", "type": "MARKET", "size": 999 }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Comparte la clave con el caso anterior, que corre primero: mandá ese antes si corrés
+  este suelto. Un rechazo también se guarda, así que la repetición lo devuelve con 200.
+}

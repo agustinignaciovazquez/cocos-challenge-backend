@@ -1,0 +1,24 @@
+meta {
+  name: 400: el monto no llega a una sola acción
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: 0d6e4a17-amount-below-one-share
+}
+
+body:json {
+  { "userId": 1, "instrumentId": 47, "side": "BUY", "type": "MARKET", "amount": 100 }
+}
+
+assert {
+  res.status: eq 400
+}

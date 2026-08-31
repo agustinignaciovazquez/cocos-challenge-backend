@@ -1,0 +1,20 @@
+meta {
+  name: 404: orden que no existe
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/orders/9999/cancel
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 404
+}
+
+docs {
+  El seed trae 11 órdenes, así que el id 9999 no existe. Sobre una base que acumuló más
+  de 9999 órdenes ese id sí existe y la respuesta pasa a ser 200 o 409.
+}

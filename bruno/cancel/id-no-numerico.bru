@@ -1,0 +1,15 @@
+meta {
+  name: 400: el id de orden tiene que ser un número
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/orders/abc/cancel
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 400
+}

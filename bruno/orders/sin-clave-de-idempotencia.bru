@@ -1,0 +1,23 @@
+meta {
+  name: 400: sin Idempotency-Key
+  type: http
+  seq: 24
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  { "userId": 1, "instrumentId": 47, "side": "BUY", "type": "MARKET", "size": 10 }
+}
+
+assert {
+  res.status: eq 400
+}

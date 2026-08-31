@@ -1,0 +1,15 @@
+meta {
+  name: 400: el término de búsqueda es obligatorio
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/instruments
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 400
+}

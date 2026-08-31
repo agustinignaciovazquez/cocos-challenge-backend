@@ -1,0 +1,20 @@
+meta {
+  name: 200: cancelar la orden abierta del seed la devuelve CANCELLED
+  type: http
+  seq: 1
+}
+
+patch {
+  url: {{baseUrl}}/orders/5/cancel
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: in 200, 409
+}
+
+docs {
+  Depende del estado del seed: 200 la primera vez y 409 después, porque la orden 5
+  ya quedó CANCELLED. Vuelve a dar 200 tras un docker compose down -v.
+}

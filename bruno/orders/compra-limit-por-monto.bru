@@ -1,0 +1,29 @@
+meta {
+  name: 201 NEW: un monto compra acciones enteras al precio límite (10000 / 900 = 11)
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: af51b920-limit-pamp-for-10000
+}
+
+body:json {
+  { "userId": 1, "instrumentId": 47, "side": "BUY", "type": "LIMIT", "price": 900, "amount": 10000 }
+}
+
+assert {
+  res.status: in 200, 201
+}
+
+docs {
+  Coloca en la primera corrida (201) y repite en las siguientes (200), porque la clave
+  ya quedó guardada. Por eso la aserción acepta los dos códigos.
+}

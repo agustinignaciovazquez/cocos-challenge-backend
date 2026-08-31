@@ -1,0 +1,15 @@
+meta {
+  name: 200: busca instrumentos por fragmento de nombre
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/instruments?q=banco
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}

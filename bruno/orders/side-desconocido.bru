@@ -1,0 +1,24 @@
+meta {
+  name: 400: side que no es un side
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: e6c25b70-side-that-is-not-a-side
+}
+
+body:json {
+  { "userId": 1, "instrumentId": 47, "side": "HOLD", "type": "MARKET", "size": 10 }
+}
+
+assert {
+  res.status: eq 400
+}

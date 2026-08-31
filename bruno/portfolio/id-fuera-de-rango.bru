@@ -1,0 +1,15 @@
+meta {
+  name: 400: un id fuera del rango de la columna, rechazado en vez de buscado
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/users/9999999999/portfolio
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 400
+}

@@ -1,0 +1,10 @@
+docs {
+  Todos los endpoints, camino feliz y errores, contra una base sembrada desde db/init.sql.
+
+  Cada envío lleva su propio Idempotency-Key; solo los dos pares de repetición comparten
+  uno. Por eso un caso 201 reenviado responde 200 con la orden que ya colocó, que es
+  justamente el mecanismo: correr la colección dos veces devuelve 200 donde la primera vez
+  devolvió 201.
+
+  El entorno "local" apunta a http://localhost:3000; --env-var baseUrl=... lo cambia.
+}

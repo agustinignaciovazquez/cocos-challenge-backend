@@ -1,0 +1,15 @@
+meta {
+  name: 200: el portfolio de un usuario, efectivo más posiciones
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/users/1/portfolio
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}

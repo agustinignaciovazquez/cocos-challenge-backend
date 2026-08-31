@@ -1,0 +1,24 @@
+meta {
+  name: 400: hace falta uno de size o amount
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: c41d90e8-neither-size-nor-amount
+}
+
+body:json {
+  { "userId": 1, "instrumentId": 47, "side": "BUY", "type": "MARKET" }
+}
+
+assert {
+  res.status: eq 400
+}

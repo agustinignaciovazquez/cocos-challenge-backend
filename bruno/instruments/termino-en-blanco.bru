@@ -1,0 +1,15 @@
+meta {
+  name: 400: un término en blanco no es un término
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/instruments?q=%20%20
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 400
+}
