@@ -49,6 +49,13 @@ orden y un reintento al lado del original.
 ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) corre `npm ci`, lint, build y la
 suite completa en cada push y pull request.
 
+## Herramientas
+
+[`tools/`](tools) trae el simulador con el que probé la API: carga, caos, reconciliación
+contra la base y un panel web para mirarlo. No es parte del enunciado y queda afuera del
+lint, del build y de los tests de la API; cómo correrlo y cómo leerlo está en
+[`tools/README.md`](tools/README.md).
+
 ## Endpoints
 
 | Método  | Ruta                   | Qué hace                                    | Códigos                 |

@@ -1,0 +1,132 @@
+/* The Cocos design language as custom properties. Every colour is written exactly once, in
+   the palette block; the two mode blocks below only choose which half of a pair a semantic
+   token points at, so a hue changes in one line. `.dark` is the panel's own scope — the
+   back-office is dark whatever the operating system says. */
+
+:root {
+  --font-display: 'Plus Jakarta Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-body: 'Nunito Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
+
+  --r-sm: 12px;
+  --r-md: 16px;
+  --r-lg: 24px;
+  --r-pill: 9999px;
+
+  /* Buy and sell as a filled surface under white text. These are the brand's own saturated
+     pair and do not brighten for dark: the lifted `--pos` that carries dark-mode *text*
+     leaves white on top of it unreadable. */
+  --pos-fill: #00a857;
+  --neg-fill: #ce2c31;
+
+  /* palette — light half / dark half */
+  --p-ground-l: #f9f9fb;
+  --p-ground-d: #06101f;
+  --p-card-l: #ffffff;
+  --p-card-d: #0d1b30;
+  --p-raised-l: #f2f5fa;
+  --p-raised-d: #142743;
+  --p-ink-l: #002c66;
+  --p-ink-d: #e9f1ff;
+  --p-body-l: #45566e;
+  --p-body-d: #a6bad6;
+  --p-muted-l: #7b8ba3;
+  --p-muted-d: #6c83a3;
+  --p-line-l: #e6eaf2;
+  --p-line-d: #1d3252;
+  --p-cta-l: #0061e0;
+  --p-cta-d: #0061e0;
+  --p-cta-hover-l: #004fb8;
+  --p-cta-hover-d: #1f7bff;
+  --p-accent-l: #0d74ce;
+  --p-accent-d: #5aa9f0;
+  --p-chip-l: #e6f4fe;
+  --p-chip-d: #10294a;
+  --p-chip-strong-l: #c2e5ff;
+  --p-chip-strong-d: #1a3d69;
+  --p-mint-l: #e9fbfb;
+  --p-mint-d: #0c2f33;
+  --p-pos-l: #00a857;
+  --p-pos-d: #2ed88c;
+  --p-pos-soft-l: #e3f8ed;
+  --p-pos-soft-d: #0b3324;
+  --p-neg-l: #ce2c31;
+  --p-neg-d: #ff7278;
+  --p-neg-soft-l: #fdeaea;
+  --p-neg-soft-d: #3a1418;
+  --p-warn-l: #a86200;
+  --p-warn-d: #f0b45a;
+  --p-warn-soft-l: #fdf2e0;
+  --p-warn-soft-d: #33240c;
+  --p-shadow-l: 0 2px 4px rgba(0, 44, 102, 0.04), 0 12px 32px rgba(0, 44, 102, 0.07);
+  --p-shadow-d: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 40px rgba(0, 0, 0, 0.35);
+
+  /* semantic — light */
+  --ground: var(--p-ground-l);
+  --card: var(--p-card-l);
+  --raised: var(--p-raised-l);
+  --ink: var(--p-ink-l);
+  --body: var(--p-body-l);
+  --muted: var(--p-muted-l);
+  --line: var(--p-line-l);
+  --cta: var(--p-cta-l);
+  --cta-hover: var(--p-cta-hover-l);
+  --accent: var(--p-accent-l);
+  --chip: var(--p-chip-l);
+  --chip-strong: var(--p-chip-strong-l);
+  --mint: var(--p-mint-l);
+  --pos: var(--p-pos-l);
+  --pos-soft: var(--p-pos-soft-l);
+  --neg: var(--p-neg-l);
+  --neg-soft: var(--p-neg-soft-l);
+  --warn: var(--p-warn-l);
+  --warn-soft: var(--p-warn-soft-l);
+  --shadow: var(--p-shadow-l);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: var(--p-ground-d);
+    --card: var(--p-card-d);
+    --raised: var(--p-raised-d);
+    --ink: var(--p-ink-d);
+    --body: var(--p-body-d);
+    --muted: var(--p-muted-d);
+    --line: var(--p-line-d);
+    --cta: var(--p-cta-d);
+    --cta-hover: var(--p-cta-hover-d);
+    --accent: var(--p-accent-d);
+    --chip: var(--p-chip-d);
+    --chip-strong: var(--p-chip-strong-d);
+    --mint: var(--p-mint-d);
+    --pos: var(--p-pos-d);
+    --pos-soft: var(--p-pos-soft-d);
+    --neg: var(--p-neg-d);
+    --neg-soft: var(--p-neg-soft-d);
+    --warn: var(--p-warn-d);
+    --warn-soft: var(--p-warn-soft-d);
+    --shadow: var(--p-shadow-d);
+  }
+}
+
+.dark {
+  --ground: var(--p-ground-d);
+  --card: var(--p-card-d);
+  --raised: var(--p-raised-d);
+  --ink: var(--p-ink-d);
+  --body: var(--p-body-d);
+  --muted: var(--p-muted-d);
+  --line: var(--p-line-d);
+  --cta: var(--p-cta-d);
+  --cta-hover: var(--p-cta-hover-d);
+  --accent: var(--p-accent-d);
+  --chip: var(--p-chip-d);
+  --chip-strong: var(--p-chip-strong-d);
+  --mint: var(--p-mint-d);
+  --pos: var(--p-pos-d);
+  --pos-soft: var(--p-pos-soft-d);
+  --neg: var(--p-neg-d);
+  --neg-soft: var(--p-neg-soft-d);
+  --warn: var(--p-warn-d);
+  --warn-soft: var(--p-warn-soft-d);
+  --shadow: var(--p-shadow-d);
+}
